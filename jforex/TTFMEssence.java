@@ -19,7 +19,13 @@ package com.dukascopy.indicators;
  *    L1 = 4H (6 candles, offset 10, right)   [Idea 1 lock]
  *    L2 = Daily (3 candles, offset 5, right) [Idea 1 lock]
  *    L3 = kept in skeleton but DISABLED      [Idea 1 lock]
- *    Anchor layer = Layer 1 (4H) drives columns/T-Spot/legs  [Anchor decision b]
+ *    Layers AUTO-derived from the chart TF (freeze 2026-09-08d, official
+ *      fractal pairings + user fix 30m->4H/D):
+ *        1m->15m/1H | 5m->1H/4H | 15m->4H/D | 30m->4H/D | 1H->D/W
+ *        4H->W/MN | D->MN/MN ; unmapped TFs floor to nearest mapped below
+ *      (on a 15m chart this yields EXACTLY the old frozen 4H+D, so all past
+ *       visual verifications remain valid)
+ *    Anchor layer = Layer 1 (model TF) drives columns/T-Spot/legs [Anchor b]
  *    EQ rule = conditional wick-midpoint     [step-1 lock + official screenshot]
  *    T-Spot zone = [wickEQ(cN) .. open(cN+1)], current candle ALWAYS prints,
  *                  model C2/C3 gate ON       [step locks + user directive]
@@ -91,12 +97,15 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     static final int MAX_LAYERS  = 3;
     static final int MAX_SIGNALS = 5;
 
-    static final int    PERIOD_COUNT = 6;
+    static final int    PERIOD_COUNT = 8;
     static final long[] PERIOD_INTERVALS = {
-        15*60*1000L, 30*60*1000L, 60*60*60*1000L,
-        4*60*60*1000L, 24*60*60*1000L, 7*60*60*1000L
+        15*60*1000L, 30*60*1000L, 60*60*1000L,
+        4*60*60*1000L, 24*60*60*1000L, 7*60*60*1000L,
+        7*24*60*60*1000L, 30*24*60*60*1000L
     };
-    static final String[] SHORT_LABELS = {"15m","30m","1H","4H","D","7H"};
+    static final String[] SHORT_LABELS = {"15m","30m","1H","4H","D","7H","W","MN"};
+    static final long W1I  = 7*24*60*60*1000L;
+    static final long MN1I = 30*24*60*60*1000L;
 
     // frozen look
     private static final Color WICK_COLOR   = Color.BLACK;
@@ -148,6 +157,18 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         int legCat = 1;
         double t1 = Double.NaN, t2 = Double.NaN;
     }
+
+    // ---------- AUTO layers: official fractal pairings + user 30m fix ----------
+    private static final long[] MAP_CHART = {60000L,300000L,900000L,1800000L,3600000L,14400000L,86400000L};
+    private static final int[][] MAP_LAYERS = {{0,2},{2,3},{3,4},{3,4},{4,6},{6,7},{7,7}};
+    /** {modelLayerIdx, biasLayerIdx} for a chart interval; unmapped floors down. */
+    static int[] autoLayers(long chartMs){
+        int pick=0;
+        for (int i=0;i<MAP_CHART.length;i++) if (MAP_CHART[i]<=chartMs) pick=i;
+        return MAP_LAYERS[pick];
+    }
+    /** column time-range pattern: HH:mm for intraday/daily, dd/MM for W & MN. */
+    static String colRangePattern(long periodMs){ return (periodMs>=W1I)?"dd/MM":"HH:mm"; }
 
     // ================== frozen settings (no option inputs exist) ==================
     private final LayerData[] layers = new LayerData[MAX_LAYERS];
@@ -219,6 +240,17 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         if (intervalMs == 7*60*60*1000L){
             int h = cal.get(Calendar.HOUR_OF_DAY);
             cal.set(Calendar.HOUR_OF_DAY,(h/7)*7);cal.set(Calendar.MINUTE,0);cal.set(Calendar.SECOND,0);cal.set(Calendar.MILLISECOND,0);
+            return cal.getTimeInMillis();
+        }
+        if (intervalMs == W1I){   // calendar week: Monday 00:00 of tz
+            cal.setFirstDayOfWeek(Calendar.MONDAY);
+            cal.set(Calendar.DAY_OF_WEEK,Calendar.MONDAY);
+            cal.set(Calendar.HOUR_OF_DAY,0);cal.set(Calendar.MINUTE,0);cal.set(Calendar.SECOND,0);cal.set(Calendar.MILLISECOND,0);
+            return cal.getTimeInMillis();
+        }
+        if (intervalMs == MN1I){  // calendar month: 1st 00:00 of tz
+            cal.set(Calendar.DAY_OF_MONTH,1);
+            cal.set(Calendar.HOUR_OF_DAY,0);cal.set(Calendar.MINUTE,0);cal.set(Calendar.SECOND,0);cal.set(Calendar.MILLISECOND,0);
             return cal.getTimeInMillis();
         }
         cal.set(Calendar.HOUR_OF_DAY,0);cal.set(Calendar.MINUTE,0);cal.set(Calendar.SECOND,0);cal.set(Calendar.MILLISECOND,0);
@@ -491,6 +523,10 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             for (LayerData l:layers){ l.historical.clear(); l.curActive=false; l.curO=l.curH=l.curL=l.curC=Double.NaN; l.curStart=0; }
         }
         TimeZone tz=CHART_TZ;
+
+        int[] al=autoLayers(periodMs);          // AUTO layers freeze 2026-09-08d
+        layers[0].periodIndex=al[0];
+        layers[1].periodIndex=al[1];
 
         for (LayerData layer:layers){
             if (!layer.enabled) continue;
@@ -799,7 +835,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
                     }
                     g2.setColor(CLOSURE_COLOR);g2.setStroke(dashStroke(1,2));
                     g2.drawLine(xOpen,0,xOpen,ch-1);
-                    SimpleDateFormat lf=new SimpleDateFormat("HH:mm");lf.setTimeZone(support.getJFTimeZone().getTimeZone());
+                    SimpleDateFormat lf=new SimpleDateFormat(colRangePattern(periodMs));lf.setTimeZone(support.getJFTimeZone().getTimeZone());
                     String t="C"+(candleIdx+1)+" ("+lf.format(new Date(cd.openTime))+"-"+lf.format(new Date(cd.openTime+periodMs))+")";
                     g2.setFont(oldFont.deriveFont(Font.BOLD,9f));
                     int tw=g2.getFontMetrics().stringWidth(t);

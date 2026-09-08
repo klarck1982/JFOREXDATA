@@ -91,7 +91,7 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
 
     static final int    PERIOD_COUNT = 6;
     static final long[] PERIOD_INTERVALS = {
-        15*60*1000L, 30*60*1000L, 60*60*60*1000L,
+        15*60*1000L, 30*60*1000L, 60*60*1000L,
         4*60*60*1000L, 24*60*60*1000L, 7*60*60*1000L
     };
     static final String[] PERIOD_NAMES = {"15 Mins","30 Mins","1 Hour","4 Hours","Daily","7 Hours"};

@@ -179,6 +179,38 @@ public class TTFMEssenceTest {
         for (int k=1;k<=10;k++) TTFMEssence.aggregate(L,rb(b0+(4+k)*3600000L*4,100+k,110+k,99+k,105+k),4*3600000L,g3);
         check("historical capped", L.historical.size()<=L.candlesToShow+2);
 
+        // ---- AUTO layers freeze 2026-09-08d ----
+        int[] al=TTFMEssence.autoLayers(60000L);
+        check("auto 1m -> 15m/1H", al[0]==0&&al[1]==2);
+        al=TTFMEssence.autoLayers(300000L);
+        check("auto 5m -> 1H/4H", al[0]==2&&al[1]==3);
+        al=TTFMEssence.autoLayers(900000L);
+        check("auto 15m -> 4H/D (old freeze)", al[0]==3&&al[1]==4);
+        al=TTFMEssence.autoLayers(1800000L);
+        check("auto 30m -> 4H/D (user fix)", al[0]==3&&al[1]==4);
+        al=TTFMEssence.autoLayers(3600000L);
+        check("auto 1H -> D/W", al[0]==4&&al[1]==6);
+        al=TTFMEssence.autoLayers(14400000L);
+        check("auto 4H -> W/MN", al[0]==6&&al[1]==7);
+        al=TTFMEssence.autoLayers(86400000L);
+        check("auto D -> MN/MN", al[0]==7&&al[1]==7);
+        al=TTFMEssence.autoLayers(180000L);
+        check("auto 3m floors to 1m map", al[0]==0&&al[1]==2);
+        al=TTFMEssence.autoLayers(7200000L);
+        check("auto 2H floors to 1H map", al[0]==4&&al[1]==6);
+        al=TTFMEssence.autoLayers(15000L);
+        check("auto 15s floors to 1m map", al[0]==0&&al[1]==2);
+        check("col pattern intraday", TTFMEssence.colRangePattern(900000L).equals("HH:mm"));
+        check("col pattern daily", TTFMEssence.colRangePattern(86400000L).equals("HH:mm"));
+        check("col pattern week", TTFMEssence.colRangePattern(TTFMEssence.W1I).equals("dd/MM"));
+        // calendar week bucket: Mon 2026-09-07 00:00 GMT+3
+        long tue=ms(8,10,0,g3);
+        check("week bucket = Monday 00:00", TTFMEssence.periodStart(tue,TTFMEssence.W1I,g3)==ms(7,0,0,g3));
+        check("week bucket stable inside week", TTFMEssence.periodStart(ms(11,23,0,g3),TTFMEssence.W1I,g3)==ms(7,0,0,g3));
+        // calendar month bucket: 2026-09-01 00:00 GMT+3
+        check("month bucket = 1st 00:00", TTFMEssence.periodStart(tue,TTFMEssence.MN1I,g3)==ms(1,0,0,g3));
+        check("month bucket stable inside month", TTFMEssence.periodStart(ms(28,5,0,g3),TTFMEssence.MN1I,g3)==ms(1,0,0,g3));
+
         // ---- the ONE agreed option: [CISD] Min Wave Length ----
         TTFMEssence es=new TTFMEssence();
         check("option default = Medium", es.cisdSensitivity==1);
@@ -189,6 +221,9 @@ public class TTFMEssenceTest {
         check("option High stored raw 2 -> min 1", es.cisdSensitivity==2&&TTFMEssence.minWaveFor(es.cisdSensitivity)==1);
         check("option info exposed", es.getOptInputParameterInfo(0)!=null && es.getOptInputParameterInfo(1)==null);
 
+        // ---- regression 2026-09-08: 1H slot was 60h (60*60*60*1000) since v1 ----
+        check("PERIOD table exact", java.util.Arrays.equals(TTFMEssence.PERIOD_INTERVALS,
+            new long[]{900000L,1800000L,3600000L,14400000L,86400000L,25200000L,604800000L,2592000000L}));
         System.out.println(pass+"/"+(pass+fail)+" PASS");
         if (fail>0) System.exit(1);
     }
