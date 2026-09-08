@@ -294,6 +294,9 @@ public class TTFMCoreCoreTest {
         check("gate: index 0 -> no zone",        !TTFMCore.modelZoneGate(mh,0,1));
 
         System.out.println();
+        // ---- regression 2026-09-08: 1H slot was 60h (60*60*60*1000) since v1 ----
+        check("PERIOD table exact", java.util.Arrays.equals(TTFMCore.PERIOD_INTERVALS,
+            new long[]{900000L,1800000L,3600000L,14400000L,86400000L,25200000L}));
         System.out.println("RESULT: pass="+pass+"  fail="+fail);
         if (fail>0) System.exit(1);
     }
