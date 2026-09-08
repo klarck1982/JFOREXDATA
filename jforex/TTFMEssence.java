@@ -1109,10 +1109,10 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         try {
             cisdStoredCount=0;
             sharedAlertLines.clear();
-            File sharedFile=new File(getSharedCISDPath()); if (sharedFile.exists()) sharedFile.delete();
-            File signalFile=new File(context.getFilesDir(),"HigherTF_Signals.csv"); if (signalFile.exists()) signalFile.delete();
-            File decisionsFile=new File(getJournalDecisionsPath()); if (decisionsFile.exists()) decisionsFile.delete();
-            File cisdFile=new File(getCisdFilePath()); if (cisdFile.exists()) cisdFile.delete();
+            File sharedFile=getSharedCISDPath(); if (sharedFile.exists()) sharedFile.delete();
+            File signalFile=new File(filesDir(),"HigherTF_Signals.csv"); if (signalFile.exists()) signalFile.delete();
+            File decisionsFile=getJournalDecisionsPath(); if (decisionsFile.exists()) decisionsFile.delete();
+            File cisdFile=getCisdFilePath(); if (cisdFile.exists()) cisdFile.delete();
             journalDecisions.clear(); journalDecisionsLastModified=0;
         } catch (Exception e){ /* best-effort */ }
     }
@@ -1129,14 +1129,14 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     }
 
     // ---------------- files: journal CSV / properties / shared / decisions ----------------
-    private String filesDir(){ return context.getFilesDir(); }
+    private File filesDir(){ return context.getFilesDir(); }   // real JForex API returns File
     private String currentTfShort(){ return tfShort(context.getFeedDescriptor().getPeriod().getInterval()); }
     private long currentPeriodMs(){ return context.getFeedDescriptor().getPeriod().getInterval(); }
 
     /** [reference] HigherTF_Signals.csv - appended at signal time, decisions stay separate. */
     private void writeCisdSignalToCsv(int index){
-        String path=filesDir()+File.separator+"HigherTF_Signals.csv";
-        boolean fileExists=new File(path).exists();
+        File path=new File(filesDir(),"HigherTF_Signals.csv");
+        boolean fileExists=path.exists();
         String instrument=context.getFeedDescriptor().getInstrument().toString();
         String chartTf=currentTfShort();
         String direction=cisdStoredBullish[index]?"+Cisd":"-Cisd";
@@ -1171,9 +1171,9 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         } catch (IOException e){ /* console only in reference; silent here */ }
     }
 
-    private String getCisdFilePath(){
+    private File getCisdFilePath(){
         String instrument=context.getFeedDescriptor().getInstrument().toString().replace("/","_");
-        return filesDir()+File.separator+"TTFMEssence_cisd_"+instrument+"_"+currentTfShort()+".properties";
+        return new File(filesDir(),"TTFMEssence_cisd_"+instrument+"_"+currentTfShort()+".properties");
     }
     private void saveCisdToFile(){
         Properties p=new Properties();
@@ -1210,7 +1210,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         } catch (IOException e){ }
     }
     private void loadCisdFromFile(){
-        File f=new File(getCisdFilePath());
+        File f=getCisdFilePath();
         if (!f.exists()) return;
         Properties p=new Properties();
         try (FileInputStream fis=new FileInputStream(f)){
@@ -1248,9 +1248,9 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         } catch (IOException e){ }
     }
 
-    private String getJournalDecisionsPath(){ return filesDir()+File.separator+"CISD_Journal_Decisions.csv"; }
+    private File getJournalDecisionsPath(){ return new File(filesDir(),"CISD_Journal_Decisions.csv"); }
     private void updateJournalDecisionsFromFile(){
-        File file=new File(getJournalDecisionsPath());
+        File file=getJournalDecisionsPath();
         long modified=file.exists()?file.lastModified():0;
         if (modified==journalDecisionsLastModified) return;
         journalDecisionsLastModified=modified;
@@ -1280,10 +1280,10 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         return null;
     }
 
-    private String getSharedCISDPath(){ return filesDir()+File.separator+"SharedCISD.csv"; }
+    private File getSharedCISDPath(){ return new File(filesDir(),"SharedCISD.csv"); }
     private List<String[]> readSharedCISDLinesInternal(){
         List<String[]> lines=new ArrayList<>();
-        File f=new File(getSharedCISDPath());
+        File f=getSharedCISDPath();
         if (!f.exists()) return lines;
         try (BufferedReader br=new BufferedReader(new FileReader(f))){
             String line;
@@ -1334,7 +1334,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     }
     private void updateSharedAlertsFromFile(){
         if (!sharedCISDAlerts) return;
-        File sf=new File(getSharedCISDPath());
+        File sf=getSharedCISDPath();
         long mod=sf.exists()?sf.lastModified():0;
         if (mod!=sharedFileLastModified){
             sharedFileLastModified=mod;
