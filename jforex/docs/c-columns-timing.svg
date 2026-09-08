@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="560" viewBox="0 0 1060 560" font-family="Segoe UI, Arial, sans-serif">
+  <rect x="0" y="0" width="1060" height="560" fill="#f7f7f4"/>
+  <text x="530" y="34" text-anchor="middle" font-size="21" font-weight="bold" fill="#222">أعمدة C1–C4 مطابقة مع توقيت الشارت (التعديل الأخير)</text>
+  <text x="530" y="58" text-anchor="middle" font-size="13" fill="#666">كل شمعة 4H من الطبقة الأولى = عمود رمادي على محور الزمن الحقيقي للشارت — الشفافية بالتناوب للتمييز</text>
+
+  <!-- chart area -->
+  <rect x="60" y="90" width="920" height="310" fill="#ffffff" stroke="#bbb"/>
+
+  <!-- column bands (alternating alpha, exaggerated here for clarity) -->
+  <rect x="60"  y="90" width="230" height="310" fill="#a0a0a0" opacity="0.12"/>
+  <rect x="290" y="90" width="230" height="310" fill="#a0a0a0" opacity="0.22"/>
+  <rect x="520" y="90" width="230" height="310" fill="#a0a0a0" opacity="0.12"/>
+  <!-- current candle: grown part (solid) + remaining time (outline) -->
+  <rect x="750" y="90" width="86"  height="310" fill="#a0a0a0" opacity="0.22"/>
+  <rect x="836" y="90" width="144" height="310" fill="#a0a0a0" opacity="0.05" stroke="#999" stroke-dasharray="4 4"/>
+
+  <!-- small M5 price candles inside columns -->
+  <g stroke-width="1">
+    <!-- column 1 -->
+    <g><line x1="95"  y1="200" x2="95"  y2="260" stroke="#333"/><rect x="90"  y="215" width="10" height="30" fill="#2e8b57"/></g>
+    <g><line x1="130" y1="210" x2="130" y2="275" stroke="#333"/><rect x="125" y="220" width="10" height="40" fill="#c0392b"/></g>
+    <g><line x1="165" y1="190" x2="165" y2="250" stroke="#333"/><rect x="160" y="200" width="10" height="35" fill="#2e8b57"/></g>
+    <g><line x1="200" y1="180" x2="200" y2="240" stroke="#333"/><rect x="195" y="185" width="10" height="40" fill="#2e8b57"/></g>
+    <g><line x1="235" y1="195" x2="235" y2="255" stroke="#333"/><rect x="230" y="210" width="10" height="30" fill="#c0392b"/></g>
+    <!-- column 2 -->
+    <g><line x1="325" y1="220" x2="325" y2="290" stroke="#333"/><rect x="320" y="235" width="10" height="40" fill="#c0392b"/></g>
+    <g><line x1="360" y1="240" x2="360" y2="310" stroke="#333"/><rect x="355" y="255" width="10" height="40" fill="#c0392b"/></g>
+    <g><line x1="395" y1="260" x2="395" y2="320" stroke="#333"/><rect x="390" y="270" width="10" height="35" fill="#2e8b57"/></g>
+    <g><line x1="430" y1="250" x2="430" y2="310" stroke="#333"/><rect x="425" y="260" width="10" height="38" fill="#2e8b57"/></g>
+    <g><line x1="465" y1="235" x2="465" y2="295" stroke="#333"/><rect x="460" y="245" width="10" height="35" fill="#2e8b57"/></g>
+    <!-- column 3 -->
+    <g><line x1="555" y1="215" x2="555" y2="275" stroke="#333"/><rect x="550" y="225" width="10" height="35" fill="#2e8b57"/></g>
+    <g><line x1="590" y1="200" x2="590" y2="260" stroke="#333"/><rect x="585" y="210" width="10" height="38" fill="#2e8b57"/></g>
+    <g><line x1="625" y1="185" x2="625" y2="245" stroke="#333"/><rect x="620" y="195" width="10" height="35" fill="#c0392b"/></g>
+    <g><line x1="660" y1="205" x2="660" y2="265" stroke="#333"/><rect x="655" y="220" width="10" height="32" fill="#c0392b"/></g>
+    <g><line x1="695" y1="225" x2="695" y2="285" stroke="#333"/><rect x="690" y="235" width="10" height="36" fill="#2e8b57"/></g>
+    <!-- column 4 (forming) -->
+    <g><line x1="775" y1="210" x2="775" y2="270" stroke="#333"/><rect x="770" y="220" width="10" height="36" fill="#2e8b57"/></g>
+    <g><line x1="810" y1="195" x2="810" y2="255" stroke="#333"/><rect x="805" y="205" width="10" height="34" fill="#2e8b57"/></g>
+  </g>
+
+  <!-- boundary dotted lines (black, default) -->
+  <g stroke="#000" stroke-width="1.4" stroke-dasharray="2 4">
+    <line x1="60"  y1="90" x2="60"  y2="400"/>
+    <line x1="290" y1="90" x2="290" y2="400"/>
+    <line x1="520" y1="90" x2="520" y2="400"/>
+    <line x1="750" y1="90" x2="750" y2="400"/>
+  </g>
+
+  <!-- now marker -->
+  <line x1="836" y1="90" x2="836" y2="400" stroke="#e67e22" stroke-width="1.6"/>
+  <text x="840" y="112" font-size="12" font-weight="bold" fill="#e67e22">الآن 21:30</text>
+
+  <!-- labels on top -->
+  <g font-size="12.5" font-weight="bold" fill="#111">
+    <text x="66"  y="106">C1 (08:00-12:00)</text>
+    <text x="296" y="106">C2 (12:00-16:00)</text>
+    <text x="526" y="106">C3 (16:00-20:00)</text>
+    <text x="756" y="106">C4 (20:00-00:00)</text>
+  </g>
+
+  <!-- time axis -->
+  <line x1="60" y1="400" x2="980" y2="400" stroke="#444" stroke-width="1.5"/>
+  <g font-size="12" fill="#333" text-anchor="middle">
+    <text x="60"  y="420">08:00</text>
+    <text x="290" y="420">12:00</text>
+    <text x="520" y="420">16:00</text>
+    <text x="750" y="420">20:00</text>
+    <text x="980" y="420">00:00</text>
+  </g>
+  <text x="520" y="440" text-anchor="middle" font-size="12" fill="#777">محور زمن الشارت (شموع M5 تحت الأعمدة)</text>
+
+  <!-- annotations -->
+  <g font-size="13" fill="#222">
+    <rect x="60" y="462" width="16" height="16" fill="#a0a0a0" opacity="0.12" stroke="#999"/>
+    <text x="84" y="475">عمود بشفافية 0.06</text>
+    <rect x="260" y="462" width="16" height="16" fill="#a0a0a0" opacity="0.22" stroke="#999"/>
+    <text x="284" y="475">العمود المجاور 0.10 — تناوب للتمييز</text>
+
+    <line x1="66" y1="500" x2="96" y2="500" stroke="#000" stroke-width="1.4" stroke-dasharray="2 4"/>
+    <text x="104" y="505">خط منقّط أسود = حد افتتاح الشمعة (كما كان)</text>
+
+    <line x1="470" y1="500" x2="500" y2="500" stroke="#e67e22" stroke-width="1.6"/>
+    <text x="508" y="505">الشمعة الحالية: العمود ينمو حتى «الآن» — وباقي المدة لا يُرسم</text>
+  </g>
+  <text x="530" y="540" text-anchor="middle" font-size="12" fill="#888">ملاحظة: الشفافية في هذه الصورة مضخّمة قليلاً للشرح — على الشارت الحقيقي أخف وأهدأ</text>
+</svg>

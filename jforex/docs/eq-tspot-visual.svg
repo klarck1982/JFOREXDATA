@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="660" viewBox="0 0 880 660" font-family="Segoe UI, Tahoma, sans-serif">
+  <rect width="880" height="660" fill="#c9cdd6"/>
+
+  <text x="20" y="30" font-size="17" font-weight="bold" fill="#1b1e24">١) الـ EQ المشروط  —  الخط الأزرق = منتصف مقطع الذيل الطويل  ·  الطبقة المرجعية الموحّدة = 4H</text>
+  <text x="20" y="352" font-size="17" font-weight="bold" fill="#1b1e24">٢) الـ T-Spot  =  [ EQ(N) .. Open(N+1) ]  ·  منطقة تشكّل الذيل (PO3 Manipulation)  ·  أخضر = يدعم الشراء (فوق EQ)  ·  أحمر = يدعم البيع (تحت EQ)</text>
+
+  <!-- ============ PANEL A ============ -->
+  <g transform="translate(0,50)">
+    <line x1="60" y1="13"  x2="200" y2="13"  stroke="#6b6f78" stroke-width="1"/>
+    <line x1="60" y1="209" x2="200" y2="209" stroke="#6b6f78" stroke-width="1"/>
+    <line x1="120" y1="13" x2="120" y2="287" stroke="#e0433a" stroke-width="2.5"/>
+    <rect x="100" y="209" width="40" height="65" fill="#e0433a"/>
+    <line x1="60" y1="111" x2="200" y2="111" stroke="#1f8fd6" stroke-width="2"/>
+    <line x1="100" y1="241" x2="140" y2="241" stroke="#9aa0aa" stroke-width="1" stroke-dasharray="3,3"/>
+    <text x="146" y="245" font-size="11" fill="#8d939d">50% جسم (مرجع)</text>
+    <text x="204" y="17"  font-size="11" fill="#3c4048">H</text>
+    <text x="204" y="213" font-size="11" fill="#3c4048">O</text>
+    <text x="204" y="115" font-size="12" font-weight="bold" fill="#1f8fd6">EQ = (H+O)/2</text>
+    <text x="60" y="300" font-size="12" fill="#3c4048">هابطة · ذيل علوي طويل</text>
+
+    <line x1="260" y1="13"  x2="400" y2="13"  stroke="#6b6f78" stroke-width="1"/>
+    <line x1="260" y1="91"  x2="400" y2="91"  stroke="#6b6f78" stroke-width="1"/>
+    <line x1="260" y1="287" x2="400" y2="287" stroke="#6b6f78" stroke-width="1"/>
+    <line x1="320" y1="13" x2="320" y2="287" stroke="#59a24f" stroke-width="2.5"/>
+    <rect x="300" y="26" width="40" height="65" fill="#8bc463"/>
+    <line x1="260" y1="189" x2="400" y2="189" stroke="#1f8fd6" stroke-width="2"/>
+    <line x1="300" y1="59" x2="340" y2="59" stroke="#9aa0aa" stroke-width="1" stroke-dasharray="3,3"/>
+    <text x="346" y="63" font-size="11" fill="#8d939d">50% جسم (مرجع)</text>
+    <text x="404" y="17"  font-size="11" fill="#3c4048">H</text>
+    <text x="404" y="95"  font-size="11" fill="#3c4048">O</text>
+    <text x="404" y="291" font-size="11" fill="#3c4048">L</text>
+    <text x="404" y="193" font-size="12" font-weight="bold" fill="#1f8fd6">EQ = (L+O)/2</text>
+    <text x="260" y="300" font-size="12" fill="#3c4048">صاعدة · ذيل سفلي طويل</text>
+
+    <line x1="460" y1="60"  x2="600" y2="60"  stroke="#6b6f78" stroke-width="1"/>
+    <line x1="460" y1="230" x2="600" y2="230" stroke="#6b6f78" stroke-width="1"/>
+    <line x1="520" y1="60" x2="520" y2="230" stroke="#59a24f" stroke-width="2.5"/>
+    <rect x="500" y="90" width="40" height="110" fill="#8bc463"/>
+    <line x1="460" y1="145" x2="600" y2="145" stroke="#1f8fd6" stroke-width="2"/>
+    <text x="604" y="64"  font-size="11" fill="#3c4048">H</text>
+    <text x="604" y="234" font-size="11" fill="#3c4048">L</text>
+    <text x="604" y="149" font-size="12" font-weight="bold" fill="#1f8fd6">EQ = (H+L)/2</text>
+    <text x="460" y="300" font-size="12" fill="#3c4048">ذيول عادية ≤ الجسم → منتصف الشمعة كاملة</text>
+  </g>
+
+  <!-- ============ PANEL B : discount + premium + lifecycle ============ -->
+  <g transform="translate(0,372)">
+    <!-- case 1: open BELOW eq -> SELL-support (RED, official) -->
+    <line x1="40" y1="40" x2="180" y2="40" stroke="#1f8fd6" stroke-width="2"/>
+    <text x="184" y="44" font-size="11" font-weight="bold" fill="#1f8fd6">EQ(N)</text>
+    <line x1="40" y1="140" x2="180" y2="140" stroke="#6b6f78" stroke-width="1"/>
+    <text x="184" y="144" font-size="11" fill="#3c4048">Open(N+1)</text>
+    <rect x="60" y="40" width="110" height="100" fill="#dc0000" opacity="0.18"/>
+    <line x1="60" y1="140" x2="170" y2="140" stroke="#5a5a5a" stroke-width="1"/><line x1="60" y1="40" x2="170" y2="40" stroke="#5a5a5a" stroke-width="1" stroke-dasharray="1.5,2.5"/>
+    <text x="66" y="34" font-size="12" font-weight="bold" fill="#a00000">T-Spot SELL</text>
+    <text x="66" y="88" font-size="11" fill="#7a0a0a">تحت EQ → الشمعة الجديدة تفتح تحتها</text><text x="66" y="104" font-size="11" fill="#7a0a0a">ذيل علوي سيتشكل صعوداً ثم يرتد هبوطاً → يدعم البيع</text>
+
+    <!-- case 2: open ABOVE eq -> BUY-support (GREEN, official) -->
+    <line x1="240" y1="140" x2="380" y2="140" stroke="#1f8fd6" stroke-width="2"/>
+    <text x="384" y="144" font-size="11" font-weight="bold" fill="#1f8fd6">EQ(N)</text>
+    <line x1="240" y1="40" x2="380" y2="40" stroke="#6b6f78" stroke-width="1"/>
+    <text x="384" y="44" font-size="11" fill="#3c4048">Open(N+1)</text>
+    <rect x="260" y="40" width="110" height="100" fill="#00b400" opacity="0.18"/>
+    <line x1="260" y1="40" x2="370" y2="40" stroke="#5a5a5a" stroke-width="1"/><line x1="260" y1="140" x2="370" y2="140" stroke="#5a5a5a" stroke-width="1" stroke-dasharray="1.5,2.5"/>
+    <text x="266" y="34" font-size="12" font-weight="bold" fill="#007a00">T-Spot BUY</text>
+    <text x="266" y="88" font-size="11" fill="#0a5c0a">فوق EQ → الشمعة الجديدة تفتح فوقها</text><text x="266" y="104" font-size="11" fill="#0a5c0a">ذيل سفلي سيتشكل هبوطاً ثم يرتد صعوداً → يدعم الشراء</text>
+
+    <!-- lifecycle column -->
+    <text x="440" y="40" font-size="13" font-weight="bold" fill="#1b1e24">دورة الحياة (نفس اللون):</text>
+    <rect x="440" y="52" width="70" height="26" fill="#00b400" opacity="0.18"/>
+    <rect x="440" y="52" width="70" height="26" fill="none" stroke="none"/>
+    <text x="518" y="70" font-size="12" fill="#1b1e24">جديدة / مُعاد اختبارها = شفافية موحّدة بلا حد</text>
+    <rect x="440" y="88" width="70" height="26" fill="#8c8c8c" opacity="0.08"/>
+    <rect x="440" y="88" width="70" height="26" fill="none" stroke="none"/>
+    <text x="518" y="106" font-size="12" fill="#1b1e24">مُبطلة (إغلاق خلف الحد البعيد) = رمادي  [invalid]</text>
+    <line x1="440" y1="132" x2="510" y2="132" stroke="#5a5a5a" stroke-width="1"/><line x1="440" y1="142" x2="510" y2="142" stroke="#5a5a5a" stroke-width="1" stroke-dasharray="1.5,2.5"/>
+    
+    <text x="518" y="142" font-size="12" fill="#1b1e24">حد OPEN مصمت · حد EQ منقط · بلا وسوم نصية</text>
+    <text x="40" y="205" font-size="12" fill="#3c4048">EQ حدود المنطقة = منتصف المدى الكامل ويك-لـ-ويك (50%) طبقاً للتحقق متعدد الإطارات من الفيديو · EQ الخط المرسوم على الشمعة المفردة = المشروط</text>
+  <text x="440" y="176" font-size="12" fill="#3c4048">وسوم: C2 تحت قاع Manipulation · C4 زاوية المنطقة · المنطقة تنمو مع شمعة الـ HTF</text>
+  </g>
+
+  <!-- legend -->
+  <g transform="translate(20,620)">
+    <line x1="0" y1="0" x2="26" y2="0" stroke="#1f8fd6" stroke-width="2"/><text x="32" y="4" font-size="12" fill="#1b1e24">EQ المشروط</text>
+    <rect x="130" y="-7" width="26" height="14" fill="#dc0000" opacity="0.35"/><text x="162" y="4" font-size="12" fill="#1b1e24">T-Spot SELL (ذيل علوي)</text>
+    <rect x="290" y="-7" width="26" height="14" fill="#00b400" opacity="0.35"/><text x="322" y="4" font-size="12" fill="#1b1e24">T-Spot BUY (ذيل سفلي)</text>
+    <line x1="450" y1="0" x2="476" y2="0" stroke="#6b6f78" stroke-width="1"/><text x="482" y="4" font-size="12" fill="#1b1e24">H / O / L</text>
+    <line x1="560" y1="0" x2="586" y2="0" stroke="#9aa0aa" stroke-width="1" stroke-dasharray="3,3"/><text x="592" y="4" font-size="12" fill="#1b1e24">50% جسم (مرجع)</text>
+  </g>
+</svg>
