@@ -57,7 +57,21 @@ package com.dukascopy.indicators;
  *    9 info panel: symbol line, model line, YOUR live clock, Bias line
  *
  *  [C]=official concept  [J]=Java reference mechanics  [O]=our definition
- * ============================================================================
+ *
+ *  ================= REFERENCE CLONE: CISD DESK (freeze 2026-09-08e) ========
+ *  User lock: "clone the CISD concept with its cards, settings, filters,
+ *  storage, sharing, Grade and Info - HigherTFCandles.txt is the ONLY
+ *  reference for the CISD idea". Eight subsystems cloned verbatim in spirit:
+ *    1 six filters (trend EMA50/200, fib retrace, market structure,
+ *      higher-TF confirmation, momentum, volume profile)
+ *    2 Grade presets Standard(AND)/Premium(>=60%)/Ultimate(>=75%)
+ *    3 storage ring MAX_CISD_STORED=3 + properties save/load
+ *    4 cross-chart sharing via SharedCISD.csv + shared alert cards panel
+ *    5 sounds alert.wav / retest.wav / None (javax.sound, user.dir)
+ *    6 cards: entry line + label + filter badges + journal decision tag
+ *    7 journal: HigherTF_Signals.csv + separate CISD_Journal_Decisions.csv
+ *    8 the [CISD] option group (15 options, reference names)
+ *  ============================================================================
  */
 
 import java.awt.AlphaComposite;
@@ -70,6 +84,14 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.Stroke;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -77,6 +99,10 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
+import java.util.Properties;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Clip;
 
 import com.dukascopy.api.IBar;
 import com.dukascopy.api.Instrument;
@@ -185,20 +211,99 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     private static final boolean CISD_IGNORE_INSIDE = true;
     private static final int ACTIVE_SESSIONS = 1;       // London + NY
 
-    // ================== the ONE agreed option ==================
-    int cisdSensitivity = 1;   // raw option value; default Medium (locked step-3)
-    /** verbatim from locked core: 0=Low(min3) 1=Medium(min2) 2=High(min1). */
+    // ================== CISD Desk options (reference group) ==================
+    int cisdSensitivity = 1;   // 0=Low(min3) 1=Medium(min2) 2=High(min1)
     static int minWaveFor(int sens){ return (sens==0)?3:(sens==1)?2:1; }
     private interface OptInputSetter { void set(Object v); }
     private static final int[] SENS_VALUES = {0,1,2};
-    private static final String[] SENS_NAMES = {"Low (min 3)","Medium (min 2)","High (min 1)"};
-    private final com.dukascopy.api.indicators.OptInputParameterInfo[] optInfos =
-        new com.dukascopy.api.indicators.OptInputParameterInfo[]{
-            new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Min Wave Length",
-                com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,
-                new com.dukascopy.api.indicators.IntegerListDescription(1,SENS_VALUES,SENS_NAMES))
-        };
-    private final OptInputSetter[] optSetters = new OptInputSetter[]{ v->cisdSensitivity=(Integer)v };
+    private static final String[] SENS_NAMES = {"Low (min 3 candles)","Medium (min 2 candles)","High (min 1 candle)"};
+    private static final int[] BOOLEAN_VALUES = {0,1};
+    private static final String[] BOOLEAN_NAMES = {"No","Yes"};
+    private static final int[] RESET_VALUES = {0,1};
+    private static final String[] RESET_NAMES = {"No","Reset"};
+    private static final int[] GRADE_VALUES = {0,1,2};
+    private static final String[] GRADE_NAMES = {"Standard","Premium","Ultimate"};
+    private static final int[] MOM_VALUES = {0,1,2,3};
+    private static final String[] MOM_NAMES = {"Off","Low","Medium","High"};
+    private static final int[] TREND_VALUES = {0,1,2};
+    private static final String[] TREND_NAMES = {"Off","EMA 50","EMA 200"};
+    private static final int[] HTF_CONF_VALUES = {0,1,2,3};
+    private static final String[] HTF_CONF_NAMES = {"Off","Layer 1","Layer 2","Layer 3"};
+    private static final int[] FIB_VALUES = {0,1,2,3,4};
+    private static final String[] FIB_NAMES = {"None","Fib 23.6%","Fib 38.2%","Fib 50%","Fib 61.8%"};
+    private static final double[] FIB_RATIOS = {0.0,0.236,0.382,0.50,0.618};
+    private static final int[] MS_VALUES = {0,1};
+    private static final String[] MS_NAMES = {"Off","On"};
+    private static final int[] SOUND_VALUES = {0,1,2};
+    private static final String[] SOUND_NAMES = {"alert.wav","retest.wav","None"};
+    private static final String[] SOUND_FILES = {"alert.wav","retest.wav","None"};
+    private static final int MAX_CISD_STORED = 3;
+    private static final Color RETEST_COLOR = new Color(100,150,255);
+
+    // Desk fields (reference names)
+    boolean showCISD = true;
+    int cisdGrade = 0;              // 0 Standard(manual) 1 Premium 2 Ultimate
+    int momentumFilter = 0;
+    boolean volumeFilterEnabled = false;
+    int trendFilter = 0;
+    int higherTFConfirmation = 0;
+    int minRetracement = 0;
+    int marketStructureFilter = 0;
+    double minVolumeRatio = 1.2;
+    String cisdAlertSound = "alert.wav";
+    String cisdRetestSound = "retest.wav";
+    boolean sharedCISDAlerts = true;
+    boolean showEntryPrice = true;
+    int maxSharedLines = 5;
+    boolean saveLoadCISD = true;
+    boolean cisdLoaded = false;
+    private long sharedFileLastModified = 0;
+    private final Object sharedFileLock = new Object();
+    private final List<String[]> sharedAlertLines = new ArrayList<>();
+    private final Map<String,String> journalDecisions = new java.util.HashMap<>();
+    private long journalDecisionsLastModified = 0;
+    private long fibCacheWaveStart = -1;
+    private double[] fibCacheResult = null;
+    private long lastAlertStartTime = 0;
+    private double lastAlertLevel = Double.NaN;
+
+    static final class PendingCisdSetup {
+        boolean active=false; long waveStartTime=0; int waveStartIdx=-1;
+        double triggerOpen=Double.NaN; double stopLevel=Double.NaN;
+    }
+    private final PendingCisdSetup pendingBullish = new PendingCisdSetup();
+    private final PendingCisdSetup pendingBearish = new PendingCisdSetup();
+
+    int cisdStoredCount = 0;
+    long[] cisdStoredStartTimes = new long[MAX_CISD_STORED];
+    long[] cisdStoredEndTimes = new long[MAX_CISD_STORED];
+    double[] cisdStoredLevels = new double[MAX_CISD_STORED];
+    boolean[] cisdStoredBullish = new boolean[MAX_CISD_STORED];
+    double[] cisdStoredStopLevels = new double[MAX_CISD_STORED];
+    long[] cisdStoredActivationTime = new long[MAX_CISD_STORED];
+    long[] cisdStoredDeactivationTime = new long[MAX_CISD_STORED];
+    long[] cisdStoredBreakoutTime = new long[MAX_CISD_STORED];
+    boolean[] cisdStoredLogged = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredRetestPlayed = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredConfirmed = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredHigherTFAligned = new boolean[MAX_CISD_STORED];
+    String[] cisdStoredConfirmingTFLabel = new String[MAX_CISD_STORED];
+    boolean[] cisdStoredFibPassed = new boolean[MAX_CISD_STORED];
+    String[] cisdStoredFibLabel = new String[MAX_CISD_STORED];
+    boolean[] cisdStoredTrendPassed = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredMomentumPassed = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredVolumePassed = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredMarketStructurePassed = new boolean[MAX_CISD_STORED];
+    String[] cisdStoredFilterSymbols = new String[MAX_CISD_STORED];
+    boolean[] cisdStoredTrendActive = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredFibActive = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredMSActive = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredHTFActive = new boolean[MAX_CISD_STORED];
+    boolean[] cisdStoredMomVolActive = new boolean[MAX_CISD_STORED];
+
+    private com.dukascopy.api.indicators.OptInputParameterInfo[] optInfos;
+    private OptInputSetter[] optSetters;
+    { buildOptions(); }   // instance initializer: options ready without onStart
 
     // ================== runtime ==================
     private IIndicatorContext context;
@@ -208,11 +313,15 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     private InputParameterInfo[] inputParameterInfos;
     private OutputParameterInfo[] outputParameterInfos;
     private TimeZone nyTZ = TimeZone.getTimeZone("America/New_York");
+    // [reference] NY-time formatters for the journal CSV (declared after nyTZ on purpose)
+    private final SimpleDateFormat nyTimeFormat = nyFmt("yyyy-MM-dd HH:mm:ss");
+    private final SimpleDateFormat dayFormat = nyFmt("EEE");
+    private SimpleDateFormat nyFmt(String pattern){
+        SimpleDateFormat f=new SimpleDateFormat(pattern, java.util.Locale.US);
+        f.setTimeZone(nyTZ);
+        return f;
+    }
 
-    private final List<Signal> signals = new ArrayList<>();
-    private long pendingBullStart=-1, pendingBearStart=-1;
-    private double pendingBullTrigger=Double.NaN, pendingBullStop=Double.NaN;
-    private double pendingBearTrigger=Double.NaN, pendingBearStop=Double.NaN;
     private long lastChartPeriodMs = -1;
     private int currentBias = 0;
     private boolean currentInversion = false;
@@ -486,12 +595,51 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     // ==================================================================
     //  JForex lifecycle (ZERO options)
     // ==================================================================
+    /** [reference option group] built at construction so it works without onStart. */
+    private void buildOptions(){
+        List<com.dukascopy.api.indicators.OptInputParameterInfo> opt=new ArrayList<>();
+        List<OptInputSetter> set=new ArrayList<>();
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Detection",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->showCISD=((Integer)v)==1);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Min Wave Length",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,SENS_VALUES,SENS_NAMES)));
+        set.add(v->cisdSensitivity=(Integer)v);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Grade",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,GRADE_VALUES,GRADE_NAMES)));
+        set.add(v->{cisdGrade=(Integer)v;applyCisdGrade(cisdGrade);});
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Momentum Filter",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,MOM_VALUES,MOM_NAMES)));
+        set.add(v->momentumFilter=(Integer)v);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Volume Filter",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->volumeFilterEnabled=((Integer)v)==1);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Trend Filter",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,TREND_VALUES,TREND_NAMES)));
+        set.add(v->trendFilter=(Integer)v);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Higher TF Confirmation",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,HTF_CONF_VALUES,HTF_CONF_NAMES)));
+        set.add(v->higherTFConfirmation=(Integer)v);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Min Retracement %",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,FIB_VALUES,FIB_NAMES)));
+        set.add(v->minRetracement=(Integer)v);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Market Structure",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,MS_VALUES,MS_NAMES)));
+        set.add(v->marketStructureFilter=(Integer)v);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Alert Sound",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,SOUND_VALUES,SOUND_NAMES)));
+        set.add(v->cisdAlertSound=SOUND_FILES[(Integer)v]);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Retest Sound",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,SOUND_VALUES,SOUND_NAMES)));
+        set.add(v->cisdRetestSound=SOUND_FILES[(Integer)v]);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Shared Alerts",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->sharedCISDAlerts=((Integer)v)==1);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Show Entry Price",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->showEntryPrice=((Integer)v)==1);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Save/Load Signals",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->saveLoadCISD=((Integer)v)==1);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Reset CISD Signals",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,RESET_VALUES,RESET_NAMES)));
+        set.add(v->{ if ((Integer)v==1) resetCISDData(); });
+        optInfos=opt.toArray(new com.dukascopy.api.indicators.OptInputParameterInfo[0]);
+        optSetters=set.toArray(new OptInputSetter[0]);
+    }
+
     @Override
     public void onStart(IIndicatorContext context){
         this.context=context;
         outputs=new Object[MAX_CANDLES*4];
         inputParameterInfos = new InputParameterInfo[]{ new InputParameterInfo("Chart Bars", InputParameterInfo.Type.BAR) };
-        indicatorInfo=new IndicatorInfo("TTFMEssence","TTFM Essence (minimal-settings experiment)","Custom",
+        buildOptions();
+        indicatorInfo=new IndicatorInfo("TTFMEssence","TTFM Essence (CISD Desk experiment)","Custom",
                 true,false,false,1,optInfos.length,MAX_CANDLES*4);
         outputParameterInfos=new OutputParameterInfo[MAX_CANDLES*4];
         String[] ohlc={"Open","High","Low","Close"};
@@ -519,7 +667,10 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         long periodMs=context.getFeedDescriptor().getPeriod().getInterval();
         if (periodMs!=lastChartPeriodMs){
             lastChartPeriodMs=periodMs;
-            signals.clear(); pendingBullStart=pendingBearStart=-1; currentBias=0; currentInversion=false;
+            cisdStoredCount=0; pendingBullish.active=false; pendingBearish.active=false;
+            fibCacheWaveStart=-1; fibCacheResult=null; lastAlertStartTime=0; lastAlertLevel=Double.NaN;
+            sharedAlertLines.clear(); sharedFileLastModified=0; cisdLoaded=false;
+            currentBias=0; currentInversion=false;
             for (LayerData l:layers){ l.historical.clear(); l.curActive=false; l.curO=l.curH=l.curL=l.curC=Double.NaN; l.curStart=0; }
         }
         TimeZone tz=CHART_TZ;
@@ -548,8 +699,11 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             long barEnd=bars[detectionIndex].time+periodMs;
             if (System.currentTimeMillis()<barEnd) detectionIndex=Math.max(0,detectionIndex-1);
         }
-        detectCisd(bars,detectionIndex,periodMs,primary);
-        updateSignalStates(bars,primary);
+        if (saveLoadCISD&&!cisdLoaded){ cisdLoaded=true; loadCisdFromFile(); }
+        detectCisd(bars,detectionIndex);
+        updateCisdStates(bars);
+        checkRetestFrequent(bars[bars.length-1]);
+        updateSharedAlertsFromFile();
         updateConceptState(bars,primary,periodMs);
 
         int length=endIndex-startIndex+1;
@@ -599,67 +753,596 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         return s/n;
     }
 
-    // ================== CISD engine (locked step 3) ==================
-    private void detectCisd(RB[] bars,int detectionIndex,long periodMs,LayerData primary){
-        if (bars.length<2||detectionIndex<0||detectionIndex>=bars.length) return;
+    // ================== CISD Desk engine (REFERENCE CLONE) ==================
+    /** [reference] Grade presets auto-configure the six filters. */
+    void applyCisdGrade(int grade){
+        if (grade==0) return;                       // Standard: manual, untouched
+        if (grade==1){                              // Premium: moderate
+            trendFilter=1; minRetracement=1; marketStructureFilter=1;
+            higherTFConfirmation=1; momentumFilter=1; volumeFilterEnabled=false;
+        } else if (grade==2){                       // Ultimate: strong
+            trendFilter=2; minRetracement=3; marketStructureFilter=1;
+            higherTFConfirmation=1; momentumFilter=2; volumeFilterEnabled=true;
+        }
+    }
+    /** [reference] Standard=AND of active; Premium>=60%; Ultimate>=75%. */
+    static boolean isSignalEligible(int grade,boolean trendPass,boolean fibPass,boolean msPass,
+            boolean htfPass,boolean momVolPass,boolean trendActive,boolean fibActive,
+            boolean msActive,boolean htfActive,boolean momVolActive){
+        if (grade==0) return trendPass&&momVolPass&&htfPass&&fibPass&&msPass;
+        int total=0, passed=0;
+        if (trendActive){total++; if(trendPass)passed++;}
+        if (fibActive){total++; if(fibPass)passed++;}
+        if (msActive){total++; if(msPass)passed++;}
+        if (htfActive){total++; if(htfPass)passed++;}
+        if (momVolActive){total++; if(momVolPass)passed++;}
+        if (total==0) return true;
+        double ratio=(double)passed/total;
+        if (grade==1) return ratio>=0.6;
+        if (grade==2) return ratio>=0.75;
+        return ratio>=0.6;
+    }
+    static double getEMA(RB[] bars,int endIndex,int period){
+        if (endIndex<period-1||period<=0) return bars[endIndex].c;
+        double multiplier=2.0/(period+1);
+        double ema=bars[endIndex-period+1].c;
+        for (int i=endIndex-period+2;i<=endIndex;i++) ema=(bars[i].c-ema)*multiplier+ema;
+        return ema;
+    }
+    static boolean passTrendFilter(RB[] bars,int index,boolean bullish,int trendFilter){
+        if (trendFilter==0) return true;
+        int period=(trendFilter==1)?50:200;
+        if (index<period-1) return true;
+        double ema=getEMA(bars,index,period);
+        double close=bars[index].c;
+        return bullish? close>ema : close<ema;
+    }
+    static boolean passMomentumAndVolumeFilters(RB[] bars,int index,boolean bullish,int momentumFilter,boolean volumeFilterEnabled,double minVolumeRatio){
+        if (momentumFilter==0&&!volumeFilterEnabled) return true;
+        RB breakoutBar=bars[index];
+        double range=breakoutBar.h-breakoutBar.l;
+        double closeLocation=range>0?(breakoutBar.c-breakoutBar.l)/range:0.5;
+        if (momentumFilter>0){
+            if (momentumFilter>=1){
+                if (bullish&&closeLocation<0.5) return false;
+                if (!bullish&&closeLocation>0.5) return false;
+            }
+            if (momentumFilter>=2){
+                double avgRange=0; int count=0;
+                for (int i=Math.max(0,index-5);i<index;i++){ avgRange+=bars[i].h-bars[i].l; count++; }
+                avgRange/=(count>0?count:1);
+                if (range<avgRange*1.2) return false;
+            }
+        }
+        if (volumeFilterEnabled){
+            double vol=breakoutBar.vol;
+            double avgVol=0; int count=Math.min(20,index);
+            for (int i=index-count;i<index;i++) avgVol+=bars[i].vol;
+            avgVol/=(count>0?count:1);
+            if (vol<avgVol*minVolumeRatio) return false;
+        }
+        return true;
+    }
+    /** [reference] 30-row volume profile; entry row must hold >=50% of max row volume. */
+    static boolean isVolumeProfileConfirmed(RB[] bars,int index,double entryPrice){
+        int lookback=Math.min(100,index+1);
+        int start=index-lookback+1; if (start<0) start=0;
+        double high=-Double.MAX_VALUE, low=Double.MAX_VALUE;
+        for (int i=start;i<=index;i++){ if (bars[i].h>high) high=bars[i].h; if (bars[i].l<low) low=bars[i].l; }
+        if (high==low) return false;
+        int rows=30; double step=(high-low)/rows;
+        double[] volumes=new double[rows];
+        for (int i=start;i<=index;i++){
+            double barHigh=bars[i].h, barLow=bars[i].l;
+            int rowFrom=(int)Math.min(Math.floor((high-barHigh)/step),rows-1);
+            int rowTo=(int)Math.min(Math.floor((high-barLow)/step),rows-1);
+            for (int r=rowFrom;r<=rowTo;r++){
+                if (barHigh==barLow) volumes[r]+=bars[i].vol;
+                else {
+                    double maxPrice=Math.min(high-r*step,barHigh);
+                    double minPrice=Math.max(high-(r+1)*step,barLow);
+                    volumes[r]+=bars[i].vol*(maxPrice-minPrice)/(barHigh-barLow);
+                }
+            }
+        }
+        double maxVol=0; for (double v:volumes) if (v>maxVol) maxVol=v;
+        if (maxVol==0) return false;
+        int entryRow=(int)Math.min(Math.floor((high-entryPrice)/step),rows-1);
+        if (entryRow<0) entryRow=0;
+        return (volumes[entryRow]/maxVol)>=0.50;
+    }
+    /** [reference] last completed candle of the confirming layer agrees in direction. */
+    private boolean checkHigherTFAlignment(boolean bullish){
+        if (higherTFConfirmation==0) return false;
+        int layerIdx=higherTFConfirmation-1;
+        if (layerIdx<0||layerIdx>=MAX_LAYERS) return false;
+        LayerData layer=layers[layerIdx];
+        if (!layer.enabled||layer.historical.isEmpty()) return false;
+        CandleData lastCandle=layer.historical.get(layer.historical.size()-1);
+        if (lastCandle==null||!lastCandle.completed) return false;
+        boolean candleBullish=lastCandle.close>lastCandle.open;
+        return bullish==candleBullish;
+    }
+    /** [reference] retrace depth of the wave vs the opposite wave length, cached per wave. */
+    private double[] computeFibRetracement(RB[] bars,int waveStartIdx,int waveEndIdx,boolean isBearishWave){
+        if (waveStartIdx<0||waveStartIdx>=bars.length||waveEndIdx<0||waveEndIdx>=bars.length) return new double[]{-1,0};
+        long currentWaveStartTime=bars[waveStartIdx].time;
+        if (currentWaveStartTime==fibCacheWaveStart&&fibCacheResult!=null) return fibCacheResult;
+        int oppositeEnd=waveStartIdx-1;
+        if (oppositeEnd<0){ fibCacheResult=new double[]{-1,0}; fibCacheWaveStart=currentWaveStartTime; return fibCacheResult; }
+        int[] oppositeWave=findWave(bars,oppositeEnd,200,!isBearishWave,CISD_IGNORE_INSIDE);
+        if (oppositeWave[0]==-1){ fibCacheResult=new double[]{-1,0}; fibCacheWaveStart=currentWaveStartTime; return fibCacheResult; }
+        double oppositeHigh=-Double.MAX_VALUE, oppositeLow=Double.MAX_VALUE;
+        for (int i=oppositeWave[0];i<=oppositeWave[1];i++){
+            oppositeHigh=Math.max(oppositeHigh,bars[i].h);
+            oppositeLow=Math.min(oppositeLow,bars[i].l);
+        }
+        double oppositeLength=oppositeHigh-oppositeLow;
+        if (oppositeLength<=0){ fibCacheResult=new double[]{-1,0}; fibCacheWaveStart=currentWaveStartTime; return fibCacheResult; }
+        double currentWaveOpen=bars[waveStartIdx].o;
+        double currentWaveExtreme=isBearishWave?Double.MAX_VALUE:-Double.MAX_VALUE;
+        for (int i=waveStartIdx;i<=waveEndIdx;i++){
+            if (isBearishWave) currentWaveExtreme=Math.min(currentWaveExtreme,bars[i].l);
+            else currentWaveExtreme=Math.max(currentWaveExtreme,bars[i].h);
+        }
+        double retracementDepth=isBearishWave?(currentWaveOpen-currentWaveExtreme):(currentWaveExtreme-currentWaveOpen);
+        if (retracementDepth<0){ fibCacheResult=new double[]{-1,0}; fibCacheWaveStart=currentWaveStartTime; return fibCacheResult; }
+        fibCacheResult=new double[]{retracementDepth/oppositeLength,oppositeLength};
+        fibCacheWaveStart=currentWaveStartTime;
+        return fibCacheResult;
+    }
+    /** [reference] last two pivots of the last 50 bars make higher-lows / lower-highs. */
+    static boolean checkMarketStructure(RB[] bars,boolean bullish){
+        int recent=Math.min(50,bars.length);
+        List<Integer> pivots=new ArrayList<>();
+        for (int i=2;i<bars.length-2&&i<recent;i++){
+            if (bullish){ if (bars[i].l<bars[i-1].l&&bars[i].l<bars[i+1].l) pivots.add(i); }
+            else        { if (bars[i].h>bars[i-1].h&&bars[i].h>bars[i+1].h) pivots.add(i); }
+        }
+        if (pivots.size()<2) return false;
+        int idx1=pivots.get(pivots.size()-2), idx2=pivots.get(pivots.size()-1);
+        return bullish? bars[idx2].l>bars[idx1].l : bars[idx2].h<bars[idx1].h;
+    }
+
+    private void detectCisd(RB[] bars,int detectionIndex){
+        if (!showCISD||bars.length<2||detectionIndex<0||detectionIndex>=bars.length) return;
+        RB currentBar=bars[detectionIndex];
         int minRequired=minWaveFor(cisdSensitivity);
         int maxLookback=200;
-        RB cur=bars[detectionIndex];
 
-        int[] w=findWave(bars,detectionIndex-1,maxLookback,true,CISD_IGNORE_INSIDE);
-        if (w[0]!=-1&&(w[1]-w[0]+1)>=minRequired){
-            double firstOpen=bars[w[0]].o; double lowest=Double.MAX_VALUE;
-            for (int k=w[0];k<=w[1];k++) lowest=Math.min(lowest,bars[k].l);
-            if (!isDuplicate(bars[w[0]].time,firstOpen)){ pendingBullStart=bars[w[0]].time; pendingBullTrigger=firstOpen; pendingBullStop=lowest; }
+        boolean trendActive=trendFilter>0;
+        boolean fibActive=minRetracement>0;
+        boolean msActive=marketStructureFilter>0;
+        boolean htfActive=higherTFConfirmation>0;
+        boolean momVolActive=momentumFilter>0||volumeFilterEnabled;
+        double fibThreshold=FIB_RATIOS[minRetracement];
+
+        int[] wave=findWave(bars,detectionIndex-1,maxLookback,true,CISD_IGNORE_INSIDE);
+        if (wave[0]!=-1&&(wave[1]-wave[0]+1)>=minRequired){
+            double firstOpen=bars[wave[0]].o; double lowest=Double.MAX_VALUE;
+            for (int k=wave[0];k<=wave[1];k++) lowest=Math.min(lowest,bars[k].l);
+            if (!isDuplicate(bars[wave[0]].time,firstOpen)){
+                if (!pendingBullish.active||bars[wave[0]].time>pendingBullish.waveStartTime||
+                    (bars[wave[0]].time==pendingBullish.waveStartTime&&lowest<pendingBullish.stopLevel)){
+                    pendingBullish.active=true; pendingBullish.triggerOpen=firstOpen;
+                    pendingBullish.stopLevel=lowest; pendingBullish.waveStartTime=bars[wave[0]].time;
+                    pendingBullish.waveStartIdx=wave[0];
+                }
+            }
         }
-        w=findWave(bars,detectionIndex-1,maxLookback,false,CISD_IGNORE_INSIDE);
-        if (w[0]!=-1&&(w[1]-w[0]+1)>=minRequired){
-            double firstOpen=bars[w[0]].o; double highest=-Double.MAX_VALUE;
-            for (int k=w[0];k<=w[1];k++) highest=Math.max(highest,bars[k].h);
-            if (!isDuplicate(bars[w[0]].time,firstOpen)){ pendingBearStart=bars[w[0]].time; pendingBearTrigger=firstOpen; pendingBearStop=highest; }
+        wave=findWave(bars,detectionIndex-1,maxLookback,false,CISD_IGNORE_INSIDE);
+        if (wave[0]!=-1&&(wave[1]-wave[0]+1)>=minRequired){
+            double firstOpen=bars[wave[0]].o; double highest=-Double.MAX_VALUE;
+            for (int k=wave[0];k<=wave[1];k++) highest=Math.max(highest,bars[k].h);
+            if (!isDuplicate(bars[wave[0]].time,firstOpen)){
+                if (!pendingBearish.active||bars[wave[0]].time>pendingBearish.waveStartTime||
+                    (bars[wave[0]].time==pendingBearish.waveStartTime&&highest>pendingBearish.stopLevel)){
+                    pendingBearish.active=true; pendingBearish.triggerOpen=firstOpen;
+                    pendingBearish.stopLevel=highest; pendingBearish.waveStartTime=bars[wave[0]].time;
+                    pendingBearish.waveStartIdx=wave[0];
+                }
+            }
         }
 
-        if (pendingBullStart!=-1 && cur.c>pendingBullTrigger){
-            if (sessionAllowed(sessionOf(pendingBullStart,nyTZ),ACTIVE_SESSIONS) && Math.abs(pendingBullTrigger-pendingBullStop)>1e-9)
-                addSignal(pendingBullStart,cur.time,pendingBullTrigger,pendingBullStop,true,periodMs,primary);
-            pendingBullStart=-1;
+        double close=currentBar.c;
+        if (pendingBullish.active&&close>pendingBullish.triggerOpen){
+            boolean trendPass=!trendActive||passTrendFilter(bars,detectionIndex,true,trendFilter);
+            boolean momVolPass=!momVolActive||passMomentumAndVolumeFilters(bars,detectionIndex,true,momentumFilter,volumeFilterEnabled,minVolumeRatio);
+            boolean htfPass=!htfActive||checkHigherTFAlignment(true);
+            boolean fibPass=!fibActive; String fibLabel="";
+            if (fibActive){
+                double[] fibResult=computeFibRetracement(bars,pendingBullish.waveStartIdx,detectionIndex-1,true);
+                if (fibResult[0]>=0&&fibResult[0]>=fibThreshold){ fibPass=true; fibLabel=String.format(java.util.Locale.US,"Fib %.0f%%",fibResult[0]*100); }
+            }
+            boolean msPass=!msActive||checkMarketStructure(bars,true);
+            if (isSignalEligible(cisdGrade,trendPass,fibPass,msPass,htfPass,momVolPass,trendActive,fibActive,msActive,htfActive,momVolActive)){
+                double entry=pendingBullish.triggerOpen, stop=pendingBullish.stopLevel;
+                if (sessionAllowed(sessionOf(pendingBullish.waveStartTime,nyTZ),ACTIVE_SESSIONS)&&Math.abs(entry-stop)>1e-9){
+                    String confirmingLabel=null;
+                    if (htfPass&&higherTFConfirmation>0) confirmingLabel=SHORT_LABELS[layers[higherTFConfirmation-1].periodIndex];
+                    boolean confirmed=isVolumeProfileConfirmed(bars,detectionIndex,entry);
+                    storeCisdSignal(pendingBullish.waveStartTime,currentBar.time,entry,stop,true,currentBar.time,
+                            confirmed,htfPass,confirmingLabel,fibPass,fibLabel,trendPass,momVolPass,msPass,
+                            trendActive,fibActive,msActive,htfActive,momVolActive);
+                }
+            }
+            pendingBullish.active=false;
         }
-        if (pendingBearStart!=-1 && cur.c<pendingBearTrigger){
-            if (sessionAllowed(sessionOf(pendingBearStart,nyTZ),ACTIVE_SESSIONS) && Math.abs(pendingBearTrigger-pendingBearStop)>1e-9)
-                addSignal(pendingBearStart,cur.time,pendingBearTrigger,pendingBearStop,false,periodMs,primary);
-            pendingBearStart=-1;
+        if (pendingBearish.active&&close<pendingBearish.triggerOpen){
+            boolean trendPass=!trendActive||passTrendFilter(bars,detectionIndex,false,trendFilter);
+            boolean momVolPass=!momVolActive||passMomentumAndVolumeFilters(bars,detectionIndex,false,momentumFilter,volumeFilterEnabled,minVolumeRatio);
+            boolean htfPass=!htfActive||checkHigherTFAlignment(false);
+            boolean fibPass=!fibActive; String fibLabel="";
+            if (fibActive){
+                double[] fibResult=computeFibRetracement(bars,pendingBearish.waveStartIdx,detectionIndex-1,false);
+                if (fibResult[0]>=0&&fibResult[0]>=fibThreshold){ fibPass=true; fibLabel=String.format(java.util.Locale.US,"Fib %.0f%%",fibResult[0]*100); }
+            }
+            boolean msPass=!msActive||checkMarketStructure(bars,false);
+            if (isSignalEligible(cisdGrade,trendPass,fibPass,msPass,htfPass,momVolPass,trendActive,fibActive,msActive,htfActive,momVolActive)){
+                double entry=pendingBearish.triggerOpen, stop=pendingBearish.stopLevel;
+                if (sessionAllowed(sessionOf(pendingBearish.waveStartTime,nyTZ),ACTIVE_SESSIONS)&&Math.abs(entry-stop)>1e-9){
+                    String confirmingLabel=null;
+                    if (htfPass&&higherTFConfirmation>0) confirmingLabel=SHORT_LABELS[layers[higherTFConfirmation-1].periodIndex];
+                    boolean confirmed=isVolumeProfileConfirmed(bars,detectionIndex,entry);
+                    storeCisdSignal(pendingBearish.waveStartTime,currentBar.time,entry,stop,false,currentBar.time,
+                            confirmed,htfPass,confirmingLabel,fibPass,fibLabel,trendPass,momVolPass,msPass,
+                            trendActive,fibActive,msActive,htfActive,momVolActive);
+                }
+            }
+            pendingBearish.active=false;
         }
     }
 
     private boolean isDuplicate(long waveStart,double entry){
-        for (Signal s:signals) if (s.waveStart==waveStart&&Math.abs(s.entry-entry)<1e-6) return true;
+        for (int i=0;i<cisdStoredCount;i++)
+            if (cisdStoredStartTimes[i]==waveStart&&Math.abs(cisdStoredLevels[i]-entry)<1e-6) return true;
         return false;
     }
 
-    private void addSignal(long waveStart,long confirmTime,double entry,double stop,boolean bullish,long periodMs,LayerData primary){
-        Signal s=new Signal();
-        s.waveStart=waveStart; s.confirmTime=confirmTime; s.entry=entry; s.stop=stop; s.bullish=bullish;
-        s.session=sessionOf(confirmTime+periodMs,nyTZ);
-        long htfPeriod=PERIOD_INTERVALS[primary.periodIndex];
-        long htfStart=periodStart(confirmTime,htfPeriod,CHART_TZ);
-        s.icEarly=icEarly(confirmTime,htfStart,htfPeriod);
-        double leg=Math.abs(entry-stop);
-        s.legCat=legCategory(leg,avgHtfRange(primary));
-        double[] mult=legMultipliers(s.legCat);
-        double dir=bullish?1:-1;
-        s.t1=entry+dir*Math.abs(mult[0])*leg;
-        s.t2=(mult.length>1)?entry+dir*Math.abs(mult[1])*leg:Double.NaN;
-        signals.add(s);
-        while (signals.size()>MAX_SIGNALS) signals.remove(0);
+    /** [reference] ring store + alert sound + shared line + CSV + save. */
+    void storeCisdSignal(long startTime,long endTime,double entry,double stop,boolean bullish,
+                                 long breakoutTime,boolean confirmed,boolean higherTFAligned,String confirmingLabel,
+                                 boolean fibPassed,String fibLabel,boolean trendPassed,boolean momentumPassed,
+                                 boolean marketStructurePassed,boolean trendActive,boolean fibActive,boolean msActive,
+                                 boolean htfActive,boolean momVolActive){
+        if (isDuplicate(startTime,entry)) return;
+        if (cisdStoredCount<MAX_CISD_STORED) cisdStoredCount++;
+        else {
+            for (int i=0;i<MAX_CISD_STORED-1;i++){
+                cisdStoredStartTimes[i]=cisdStoredStartTimes[i+1];
+                cisdStoredEndTimes[i]=cisdStoredEndTimes[i+1];
+                cisdStoredLevels[i]=cisdStoredLevels[i+1];
+                cisdStoredBullish[i]=cisdStoredBullish[i+1];
+                cisdStoredStopLevels[i]=cisdStoredStopLevels[i+1];
+                cisdStoredActivationTime[i]=cisdStoredActivationTime[i+1];
+                cisdStoredDeactivationTime[i]=cisdStoredDeactivationTime[i+1];
+                cisdStoredBreakoutTime[i]=cisdStoredBreakoutTime[i+1];
+                cisdStoredLogged[i]=cisdStoredLogged[i+1];
+                cisdStoredRetestPlayed[i]=cisdStoredRetestPlayed[i+1];
+                cisdStoredConfirmed[i]=cisdStoredConfirmed[i+1];
+                cisdStoredHigherTFAligned[i]=cisdStoredHigherTFAligned[i+1];
+                cisdStoredConfirmingTFLabel[i]=cisdStoredConfirmingTFLabel[i+1];
+                cisdStoredFibPassed[i]=cisdStoredFibPassed[i+1];
+                cisdStoredFibLabel[i]=cisdStoredFibLabel[i+1];
+                cisdStoredTrendPassed[i]=cisdStoredTrendPassed[i+1];
+                cisdStoredMomentumPassed[i]=cisdStoredMomentumPassed[i+1];
+                cisdStoredVolumePassed[i]=cisdStoredVolumePassed[i+1];
+                cisdStoredMarketStructurePassed[i]=cisdStoredMarketStructurePassed[i+1];
+                cisdStoredFilterSymbols[i]=cisdStoredFilterSymbols[i+1];
+                cisdStoredTrendActive[i]=cisdStoredTrendActive[i+1];
+                cisdStoredFibActive[i]=cisdStoredFibActive[i+1];
+                cisdStoredMSActive[i]=cisdStoredMSActive[i+1];
+                cisdStoredHTFActive[i]=cisdStoredHTFActive[i+1];
+                cisdStoredMomVolActive[i]=cisdStoredMomVolActive[i+1];
+            }
+        }
+        int idx=cisdStoredCount-1;
+        cisdStoredStartTimes[idx]=startTime;
+        cisdStoredEndTimes[idx]=endTime;
+        cisdStoredLevels[idx]=entry;
+        cisdStoredBullish[idx]=bullish;
+        cisdStoredStopLevels[idx]=stop;
+        cisdStoredActivationTime[idx]=0;
+        cisdStoredDeactivationTime[idx]=Long.MAX_VALUE;
+        cisdStoredBreakoutTime[idx]=breakoutTime;
+        cisdStoredLogged[idx]=false;
+        cisdStoredRetestPlayed[idx]=false;
+        cisdStoredConfirmed[idx]=confirmed;
+        cisdStoredHigherTFAligned[idx]=higherTFAligned;
+        cisdStoredConfirmingTFLabel[idx]=confirmingLabel;
+        cisdStoredFibPassed[idx]=fibPassed;
+        cisdStoredFibLabel[idx]=fibLabel;
+        cisdStoredTrendPassed[idx]=trendPassed;
+        cisdStoredMomentumPassed[idx]=momentumPassed;
+        cisdStoredVolumePassed[idx]=volumeFilterEnabled;
+        cisdStoredMarketStructurePassed[idx]=marketStructurePassed;
+        cisdStoredTrendActive[idx]=trendActive;
+        cisdStoredFibActive[idx]=fibActive;
+        cisdStoredMSActive[idx]=msActive;
+        cisdStoredHTFActive[idx]=htfActive;
+        cisdStoredMomVolActive[idx]=momVolActive;
+        if (!cisdAlertSound.equals("None")) playSound(cisdAlertSound);
+        lastAlertStartTime=startTime; lastAlertLevel=entry;
+        if (context!=null){ // files need the JForex context (tests run headless)
+            writeSharedCISDLine(bullish,entry,breakoutTime,confirmed);
+            writeCisdSignalToCsv(idx);
+            if (saveLoadCISD) saveCisdToFile();
+        }
     }
 
-    private void updateSignalStates(RB[] bars,LayerData primary){
-        for (Signal s:signals){
-            int from=-1;
-            for (int i=0;i<bars.length;i++) if (bars[i].time>s.confirmTime){ from=i; break; }
-            boolean htfClosed=false;
-            for (CandleData c:primary.historical) if (c.completed && c.openTime>s.confirmTime){ htfClosed=true; break; }
-            s.state = (from<0)?0:signalState(s.bullish,s.entry,s.stop,bars,from,htfClosed);
+    /** [reference] activation tracking for retest sound (entry touched after breakout). */
+    private void updateCisdStates(RB[] bars){
+        if (cisdStoredCount==0) return;
+        for (int i=0;i<cisdStoredCount;i++){
+            if (cisdStoredActivationTime[i]==0){
+                for (RB bar:bars){
+                    if (bar.time<=cisdStoredBreakoutTime[i]) continue;
+                    boolean touchedEntry=cisdStoredBullish[i]? (bar.l<=cisdStoredLevels[i]) : (bar.h>=cisdStoredLevels[i]);
+                    if (touchedEntry){ cisdStoredActivationTime[i]=bar.time; break; }
+                }
+            }
+        }
+    }
+    private void checkRetestFrequent(RB currentBar){
+        if (cisdStoredCount==0||currentBar==null||cisdRetestSound.equals("None")) return;
+        long currentBarTime=currentBar.time;
+        for (int i=0;i<cisdStoredCount;i++){
+            if (cisdStoredRetestPlayed[i]) continue;
+            if (currentBarTime<=cisdStoredBreakoutTime[i]) continue;
+            if (cisdStoredActivationTime[i]!=0){
+                playSound(cisdRetestSound);
+                cisdStoredRetestPlayed[i]=true;
+                updateSharedRetestLine(i);
+                continue;
+            }
+            boolean touched=cisdStoredBullish[i]? (currentBar.l<=cisdStoredLevels[i]) : (currentBar.h>=cisdStoredLevels[i]);
+            if (touched){
+                cisdStoredActivationTime[i]=currentBarTime;
+                playSound(cisdRetestSound);
+                cisdStoredRetestPlayed[i]=true;
+                updateSharedRetestLine(i);
+                sharedFileLastModified=0;
+            }
+        }
+    }
+    private void resetCISDData(){
+        try {
+            cisdStoredCount=0;
+            sharedAlertLines.clear();
+            File sharedFile=new File(getSharedCISDPath()); if (sharedFile.exists()) sharedFile.delete();
+            File signalFile=new File(context.getFilesDir(),"HigherTF_Signals.csv"); if (signalFile.exists()) signalFile.delete();
+            File decisionsFile=new File(getJournalDecisionsPath()); if (decisionsFile.exists()) decisionsFile.delete();
+            File cisdFile=new File(getCisdFilePath()); if (cisdFile.exists()) cisdFile.delete();
+            journalDecisions.clear(); journalDecisionsLastModified=0;
+        } catch (Exception e){ /* best-effort */ }
+    }
+    private void playSound(String filename){
+        if (filename.equals("None")) return;
+        try {
+            String userDir=System.getProperty("user.dir");
+            File soundFile=new File(userDir,filename);
+            if (!soundFile.exists()) return;
+            AudioInputStream audioIn=AudioSystem.getAudioInputStream(soundFile);
+            Clip clip=AudioSystem.getClip();
+            clip.open(audioIn); clip.start();
+        } catch (Exception e){ /* silent fallback, reference behaviour */ }
+    }
+
+    // ---------------- files: journal CSV / properties / shared / decisions ----------------
+    private String filesDir(){ return context.getFilesDir(); }
+    private String currentTfShort(){ return tfShort(context.getFeedDescriptor().getPeriod().getInterval()); }
+    private long currentPeriodMs(){ return context.getFeedDescriptor().getPeriod().getInterval(); }
+
+    /** [reference] HigherTF_Signals.csv - appended at signal time, decisions stay separate. */
+    private void writeCisdSignalToCsv(int index){
+        String path=filesDir()+File.separator+"HigherTF_Signals.csv";
+        boolean fileExists=new File(path).exists();
+        String instrument=context.getFeedDescriptor().getInstrument().toString();
+        String chartTf=currentTfShort();
+        String direction=cisdStoredBullish[index]?"+Cisd":"-Cisd";
+        String directionId=cisdStoredBullish[index]?"BUY":"SELL";
+        long waveStartMillis=cisdStoredStartTimes[index];
+        long signalMillis=cisdStoredEndTimes[index]+currentPeriodMs();
+        String waveStartTime=nyTimeFormat.format(new java.util.Date(waveStartMillis));
+        String signalTime=nyTimeFormat.format(new java.util.Date(signalMillis));
+        String day=dayFormat.format(new java.util.Date(signalMillis));
+        String session=sessionOf(signalMillis,nyTZ);
+        String cleanInstrument=instrument.replace("/","_").replace(".","_");
+        String signalId=cleanInstrument+"_"+chartTf+"_"+directionId+"_"+cisdStoredEndTimes[index];
+        String grade=cisdGrade==0?"Standard":(cisdGrade==1?"Premium":"Ultimate");
+        int total=0,passed=0;
+        if (cisdStoredTrendActive[index]){total++; if(cisdStoredTrendPassed[index])passed++;}
+        if (cisdStoredFibActive[index]){total++; if(cisdStoredFibPassed[index])passed++;}
+        if (cisdStoredMSActive[index]){total++; if(cisdStoredMarketStructurePassed[index])passed++;}
+        if (cisdStoredHTFActive[index]){total++; if(cisdStoredHigherTFAligned[index])passed++;}
+        if (cisdStoredMomVolActive[index]){total++; if(cisdStoredMomentumPassed[index]||cisdStoredVolumePassed[index])passed++;}
+        String score=total>0?passed+"/"+total:"-";
+        try (PrintWriter pw=new PrintWriter(new FileWriter(path,true))){
+            if (!fileExists)
+                pw.println("SignalID,SignalTimeNY,WaveStartTimeNY,Date,Day,Session,Instrument,TF,Direction,Grade,Score,Trend,Fib,MS,HTF,MomVol,Confirmed");
+            pw.printf(java.util.Locale.US,"%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%n",
+                signalId,signalTime,waveStartTime,signalTime.substring(0,10),day,session,instrument,chartTf,direction,grade,score,
+                cisdStoredTrendActive[index]?(cisdStoredTrendPassed[index]?"1":"0"):"-",
+                cisdStoredFibActive[index]?(cisdStoredFibPassed[index]?"1":"0"):"-",
+                cisdStoredMSActive[index]?(cisdStoredMarketStructurePassed[index]?"1":"0"):"-",
+                cisdStoredHTFActive[index]?(cisdStoredHigherTFAligned[index]?"1":"0"):"-",
+                cisdStoredMomVolActive[index]?((cisdStoredMomentumPassed[index]||cisdStoredVolumePassed[index])?"1":"0"):"-",
+                cisdStoredConfirmed[index]?"1":"0");
+        } catch (IOException e){ /* console only in reference; silent here */ }
+    }
+
+    private String getCisdFilePath(){
+        String instrument=context.getFeedDescriptor().getInstrument().toString().replace("/","_");
+        return filesDir()+File.separator+"TTFMEssence_cisd_"+instrument+"_"+currentTfShort()+".properties";
+    }
+    private void saveCisdToFile(){
+        Properties p=new Properties();
+        int count=0;
+        for (int i=0;i<cisdStoredCount;i++){
+            if (cisdStoredActivationTime[i]==0){
+                String pre="cisd."+count+".";
+                p.setProperty(pre+"startTime",String.valueOf(cisdStoredStartTimes[i]));
+                p.setProperty(pre+"endTime",String.valueOf(cisdStoredEndTimes[i]));
+                p.setProperty(pre+"entry",String.valueOf(cisdStoredLevels[i]));
+                p.setProperty(pre+"stop",String.valueOf(cisdStoredStopLevels[i]));
+                p.setProperty(pre+"bullish",String.valueOf(cisdStoredBullish[i]));
+                p.setProperty(pre+"breakoutTime",String.valueOf(cisdStoredBreakoutTime[i]));
+                p.setProperty(pre+"confirmed",String.valueOf(cisdStoredConfirmed[i]));
+                p.setProperty(pre+"higherTFAligned",String.valueOf(cisdStoredHigherTFAligned[i]));
+                p.setProperty(pre+"confirmingTFLabel",cisdStoredConfirmingTFLabel[i]!=null?cisdStoredConfirmingTFLabel[i]:"");
+                p.setProperty(pre+"fibPassed",String.valueOf(cisdStoredFibPassed[i]));
+                p.setProperty(pre+"fibLabel",cisdStoredFibLabel[i]!=null?cisdStoredFibLabel[i]:"");
+                p.setProperty(pre+"trendPassed",String.valueOf(cisdStoredTrendPassed[i]));
+                p.setProperty(pre+"momentumPassed",String.valueOf(cisdStoredMomentumPassed[i]));
+                p.setProperty(pre+"volumePassed",String.valueOf(cisdStoredVolumePassed[i]));
+                p.setProperty(pre+"marketStructurePassed",String.valueOf(cisdStoredMarketStructurePassed[i]));
+                p.setProperty(pre+"trendActive",String.valueOf(cisdStoredTrendActive[i]));
+                p.setProperty(pre+"fibActive",String.valueOf(cisdStoredFibActive[i]));
+                p.setProperty(pre+"msActive",String.valueOf(cisdStoredMSActive[i]));
+                p.setProperty(pre+"htfActive",String.valueOf(cisdStoredHTFActive[i]));
+                p.setProperty(pre+"momVolActive",String.valueOf(cisdStoredMomVolActive[i]));
+                count++;
+            }
+        }
+        p.setProperty("cisd.count",String.valueOf(count));
+        try (FileOutputStream fos=new FileOutputStream(getCisdFilePath())){
+            p.store(fos,"TTFMEssence CISD");
+        } catch (IOException e){ }
+    }
+    private void loadCisdFromFile(){
+        File f=new File(getCisdFilePath());
+        if (!f.exists()) return;
+        Properties p=new Properties();
+        try (FileInputStream fis=new FileInputStream(f)){
+            p.load(fis);
+            int count=Integer.parseInt(p.getProperty("cisd.count","0"));
+            for (int i=0;i<count&&cisdStoredCount<MAX_CISD_STORED;i++){
+                String pre="cisd."+i+".";
+                int idx=cisdStoredCount;
+                cisdStoredStartTimes[idx]=Long.parseLong(p.getProperty(pre+"startTime","0"));
+                cisdStoredEndTimes[idx]=Long.parseLong(p.getProperty(pre+"endTime","0"));
+                cisdStoredLevels[idx]=Double.parseDouble(p.getProperty(pre+"entry","0"));
+                cisdStoredStopLevels[idx]=Double.parseDouble(p.getProperty(pre+"stop","0"));
+                cisdStoredBullish[idx]=Boolean.parseBoolean(p.getProperty(pre+"bullish","false"));
+                cisdStoredBreakoutTime[idx]=Long.parseLong(p.getProperty(pre+"breakoutTime","0"));
+                cisdStoredActivationTime[idx]=0;
+                cisdStoredDeactivationTime[idx]=Long.MAX_VALUE;
+                cisdStoredLogged[idx]=false;
+                cisdStoredRetestPlayed[idx]=false;
+                cisdStoredConfirmed[idx]=Boolean.parseBoolean(p.getProperty(pre+"confirmed","false"));
+                cisdStoredHigherTFAligned[idx]=Boolean.parseBoolean(p.getProperty(pre+"higherTFAligned","false"));
+                cisdStoredConfirmingTFLabel[idx]=p.getProperty(pre+"confirmingTFLabel",null);
+                cisdStoredFibPassed[idx]=Boolean.parseBoolean(p.getProperty(pre+"fibPassed","false"));
+                cisdStoredFibLabel[idx]=p.getProperty(pre+"fibLabel",null);
+                cisdStoredTrendPassed[idx]=Boolean.parseBoolean(p.getProperty(pre+"trendPassed","false"));
+                cisdStoredMomentumPassed[idx]=Boolean.parseBoolean(p.getProperty(pre+"momentumPassed","false"));
+                cisdStoredVolumePassed[idx]=Boolean.parseBoolean(p.getProperty(pre+"volumePassed","false"));
+                cisdStoredMarketStructurePassed[idx]=Boolean.parseBoolean(p.getProperty(pre+"marketStructurePassed","false"));
+                cisdStoredTrendActive[idx]=Boolean.parseBoolean(p.getProperty(pre+"trendActive","false"));
+                cisdStoredFibActive[idx]=Boolean.parseBoolean(p.getProperty(pre+"fibActive","false"));
+                cisdStoredMSActive[idx]=Boolean.parseBoolean(p.getProperty(pre+"msActive","false"));
+                cisdStoredHTFActive[idx]=Boolean.parseBoolean(p.getProperty(pre+"htfActive","false"));
+                cisdStoredMomVolActive[idx]=Boolean.parseBoolean(p.getProperty(pre+"momVolActive","false"));
+                cisdStoredCount++;
+            }
+        } catch (IOException e){ }
+    }
+
+    private String getJournalDecisionsPath(){ return filesDir()+File.separator+"CISD_Journal_Decisions.csv"; }
+    private void updateJournalDecisionsFromFile(){
+        File file=new File(getJournalDecisionsPath());
+        long modified=file.exists()?file.lastModified():0;
+        if (modified==journalDecisionsLastModified) return;
+        journalDecisionsLastModified=modified;
+        journalDecisions.clear();
+        if (!file.exists()) return;
+        try (BufferedReader reader=new BufferedReader(new FileReader(file))){
+            String line; boolean header=true;
+            while ((line=reader.readLine())!=null){
+                if (header){header=false;continue;}
+                String[] parts=line.replace("\"","").split(",",4);
+                if (parts.length>=2&&parts[0].trim().length()>0)
+                    journalDecisions.put(parts[0].trim(),parts[1].trim().toUpperCase());
+            }
+        } catch (IOException ignored){ }
+    }
+    private String getSignalId(int index){
+        String instrument=context.getFeedDescriptor().getInstrument().toString().replace("/","_").replace(".","_");
+        return instrument+"_"+currentTfShort()+"_"+(cisdStoredBullish[index]?"BUY":"SELL")+"_"+cisdStoredEndTimes[index];
+    }
+    private String findJournalDecision(int index){
+        String exact=journalDecisions.get(getSignalId(index));
+        if (exact!=null) return exact;
+        String instrument=context.getFeedDescriptor().getInstrument().toString().replace("/","_").replace(".","_");
+        String suffix="_"+(cisdStoredBullish[index]?"BUY":"SELL")+"_"+cisdStoredEndTimes[index];
+        for (Map.Entry<String,String> en:journalDecisions.entrySet())
+            if (en.getKey().startsWith(instrument+"_")&&en.getKey().endsWith(suffix)) return en.getValue();
+        return null;
+    }
+
+    private String getSharedCISDPath(){ return filesDir()+File.separator+"SharedCISD.csv"; }
+    private List<String[]> readSharedCISDLinesInternal(){
+        List<String[]> lines=new ArrayList<>();
+        File f=new File(getSharedCISDPath());
+        if (!f.exists()) return lines;
+        try (BufferedReader br=new BufferedReader(new FileReader(f))){
+            String line;
+            while ((line=br.readLine())!=null){
+                String[] parts=line.split(",");
+                if (parts.length>=7) lines.add(new String[]{parts[0],parts[1],parts[2],parts[3],parts[4],parts[5],parts[6]});
+                else if (parts.length==6) lines.add(new String[]{parts[0],parts[1],parts[2],parts[3],parts[4],parts[5],"false"});
+                else if (parts.length==5) lines.add(new String[]{parts[0],parts[1],parts[2],parts[3],parts[4],"0","false"});
+                else if (parts.length==4) lines.add(new String[]{parts[0],parts[1],parts[2],parts[3],"false","0","false"});
+            }
+        } catch (IOException e){ }
+        return lines;
+    }
+    /** [reference] SharedCISD.csv: Instrument,TF,Type,Entry,Retest,BreakoutTime,Confirmed (newest first, max 5). */
+    private void writeSharedCISDLine(boolean bullish,double entry,long breakoutTime,boolean confirmed){
+        if (!sharedCISDAlerts) return;
+        synchronized (sharedFileLock){
+            try {
+                String instrument=context.getFeedDescriptor().getInstrument().toString();
+                String tf=currentTfShort();
+                List<String[]> lines=readSharedCISDLinesInternal();
+                lines.add(0,new String[]{instrument,tf,(bullish?"+Cisd":"-Cisd"),String.valueOf(entry),"false",String.valueOf(breakoutTime),String.valueOf(confirmed)});
+                while (lines.size()>maxSharedLines) lines.remove(lines.size()-1);
+                try (PrintWriter pw=new PrintWriter(new FileWriter(getSharedCISDPath()))){
+                    for (String[] l:lines) pw.println(l[0]+","+l[1]+","+l[2]+","+l[3]+","+l[4]+","+l[5]+","+l[6]);
+                }
+            } catch (Exception e){ }
+        }
+    }
+    private void updateSharedRetestLine(int index){
+        if (!sharedCISDAlerts) return;
+        synchronized (sharedFileLock){
+            List<String[]> lines=readSharedCISDLinesInternal();
+            boolean changed=false;
+            for (String[] parts:lines){
+                if (parts.length<6) continue;
+                long btTime;
+                try { btTime=Long.parseLong(parts[5]); } catch (NumberFormatException e){ continue; }
+                if (btTime==cisdStoredBreakoutTime[index]&&!"true".equals(parts[4])){ parts[4]="true"; changed=true; break; }
+            }
+            if (changed){
+                try (PrintWriter pw=new PrintWriter(new FileWriter(getSharedCISDPath()))){
+                    for (String[] l:lines)
+                        pw.println(l[0]+","+l[1]+","+l[2]+","+l[3]+","+l[4]+","+l[5]+","+(l.length>6?l[6]:"false"));
+                } catch (IOException e){ }
+            }
+        }
+    }
+    private void updateSharedAlertsFromFile(){
+        if (!sharedCISDAlerts) return;
+        File sf=new File(getSharedCISDPath());
+        long mod=sf.exists()?sf.lastModified():0;
+        if (mod!=sharedFileLastModified){
+            sharedFileLastModified=mod;
+            synchronized (sharedFileLock){
+                List<String[]> lines=readSharedCISDLinesInternal();
+                sharedAlertLines.clear();
+                for (int i=0;i<Math.min(maxSharedLines,lines.size());i++) sharedAlertLines.add(lines.get(i));
+            }
         }
     }
 
@@ -847,7 +1530,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
 
         if (outputIdx==0){
             drawPrevEqOpen(g2,support);          // element 6 (current-candle dotted bounds)
-            drawCisdLines(g2,support,slot,oldFont); // element 8
+            drawCisdLines(g2,support,slot,oldFont); // element 8 (CISD Desk cards)
+            drawSharedAlertsPanel(g2,support,oldFont);
             drawTspot(g2,support);               // elements 4,5,6
             drawProjLadder(g2,support);          // element 9
             drawInfoPanel(g2,support,oldFont);   // element 10
@@ -869,34 +1553,143 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     /** element 7: CISD detection drawing ONLY - entry line in direction color,
      *  label, and the dotted protected-swing stop (stop stays with the engine,
      *  step-3 lock). State colors and TP lines are OFF by user correction. */
+    /** [reference drawCISDLines] card per stored signal: entry line + label + decision + retest tag + filter badges. */
     private void drawCisdLines(Graphics2D g2,IIndicatorDrawingSupport support,float slot,Font oldFont){
-        if (signals.isEmpty()) return;
-        String tf=tfShort(context.getFeedDescriptor().getPeriod().getInterval());
-        for (Signal s:signals){
-            int x1=support.getXForTime(s.waveStart,false);
-            int x2=support.getXForTime(s.confirmTime,false);
-            if (x1<0||x2<0) continue;
-            int y=(int)support.getYForValue(s.entry);
-            if (y<0||y>=support.getChartHeight()) continue;
-            int xEnd=(int)(x2+3*slot); if (xEnd>support.getChartWidth()) xEnd=support.getChartWidth();
+        if (!showCISD||cisdStoredCount==0) return;
+        String tfShort=currentTfShort();
+        updateJournalDecisionsFromFile();
+        for (int i=0;i<cisdStoredCount;i++){
+            long sigStart=cisdStoredStartTimes[i];
+            long sigEnd=cisdStoredEndTimes[i];
+            double sigLevel=cisdStoredLevels[i];
+            boolean sigBullish=cisdStoredBullish[i];
+            int xStart=support.getXForTime(sigStart,false);
+            int xBreakout=support.getXForTime(sigEnd,false);
+            if (xStart<0||xBreakout<0) continue;
+            int yLevel=(int)support.getYForValue(sigLevel);
+            if (yLevel<0||yLevel>=support.getChartHeight()) continue;
+            int xEnd=xBreakout+(int)(3*slot);
+            if (xEnd>support.getChartWidth()) xEnd=support.getChartWidth();
 
-            Color dirColor=s.bullish?CISD_BULL_COLOR:CISD_BEAR_COLOR;
-            g2.setColor(dirColor);
-            g2.setStroke(new BasicStroke(2.0f,BasicStroke.CAP_BUTT,BasicStroke.JOIN_MITER,10f,null,0f));
-            g2.drawLine(x1,y,xEnd,y);
+            Color lineColor=sigBullish?CISD_BULL_COLOR:CISD_BEAR_COLOR;
+            g2.setColor(lineColor);
+            g2.setStroke(new BasicStroke(2.0f,BasicStroke.CAP_BUTT,BasicStroke.JOIN_MITER));
+            g2.drawLine(xStart,yLevel,xEnd,yLevel);
 
-            String lbl=(s.bullish?"+Cisd":"-Cisd")+" ("+tf+")";
+            String mainLabel=(sigBullish?"+Cisd":"-Cisd")+" ("+tfShort+")";
             g2.setFont(oldFont.deriveFont(Font.BOLD,10f));
-            FontMetrics fm=g2.getFontMetrics();
-            int tx=xEnd+4; if (tx+fm.stringWidth(lbl)>support.getChartWidth()) tx=support.getChartWidth()-fm.stringWidth(lbl)-10;
-            g2.setColor(dirColor); g2.drawString(lbl,tx,y-4);
+            FontMetrics fmMain=g2.getFontMetrics();
+            int cisTextX=xEnd+4;
+            int cisTextY=yLevel-4;
+            if (cisTextX+fmMain.stringWidth(mainLabel)>support.getChartWidth())
+                cisTextX=support.getChartWidth()-fmMain.stringWidth(mainLabel)-10;
+            g2.setColor(lineColor);
+            g2.drawString(mainLabel,cisTextX,cisTextY);
+            drawJournalDecision(g2,findJournalDecision(i),cisTextX,cisTextY,sigBullish,oldFont);
+            int curX=cisTextX+fmMain.stringWidth(mainLabel)+4;
 
-            int ys=(int)support.getYForValue(s.stop);
-            if (ys>=0&&ys<support.getChartHeight()){
-                g2.setColor(dirColor);
-                g2.setStroke(new BasicStroke(1.2f,BasicStroke.CAP_BUTT,BasicStroke.JOIN_MITER,10f,new float[]{2f,3f},0f));
-                g2.drawLine(x1,ys,xEnd,ys);
+            if (cisdStoredRetestPlayed[i]){
+                Font retestFont=oldFont.deriveFont(Font.ITALIC,8f);
+                g2.setFont(retestFont);
+                FontMetrics fmRetest=g2.getFontMetrics();
+                String retestStr="retest";
+                int retestWidth=fmRetest.stringWidth(retestStr);
+                Color retestColor=sigBullish?new Color(100,180,255):new Color(255,120,120);
+                g2.setColor(retestColor);
+                g2.drawString(retestStr,curX,cisTextY);
+                curX+=retestWidth+6;
             }
+
+            g2.setFont(oldFont.deriveFont(Font.PLAIN,7f));
+            FontMetrics fmBadge=g2.getFontMetrics();
+            int badgePadding=2, badgeArc=4;
+            if (cisdStoredFibActive[i]&&cisdStoredFibPassed[i]){
+                drawBadge(g2,"FIB",curX,cisTextY,fmBadge,badgePadding,badgeArc,new Color(0,180,0,150),Color.WHITE);
+                curX+=fmBadge.stringWidth("FIB")+badgePadding*2+3;
+            }
+            if (cisdStoredMSActive[i]&&cisdStoredMarketStructurePassed[i]){
+                drawBadge(g2,"STR",curX,cisTextY,fmBadge,badgePadding,badgeArc,new Color(128,0,128,150),Color.WHITE);
+                curX+=fmBadge.stringWidth("STR")+badgePadding*2+3;
+            }
+            if (cisdStoredTrendActive[i]&&cisdStoredTrendPassed[i]){
+                drawBadge(g2,"TREND",curX,cisTextY,fmBadge,badgePadding,badgeArc,new Color(0,100,200,150),Color.WHITE);
+                curX+=fmBadge.stringWidth("TREND")+badgePadding*2+3;
+            }
+            if (cisdStoredHTFActive[i]&&cisdStoredHigherTFAligned[i]){
+                drawBadge(g2,"HTF",curX,cisTextY,fmBadge,badgePadding,badgeArc,new Color(218,165,32,150),Color.WHITE);
+                curX+=fmBadge.stringWidth("HTF")+badgePadding*2+3;
+            }
+            if (cisdStoredMomVolActive[i]&&(cisdStoredMomentumPassed[i]||cisdStoredVolumePassed[i])){
+                drawBadge(g2,"MOM",curX,cisTextY,fmBadge,badgePadding,badgeArc,new Color(255,140,0,150),Color.WHITE);
+                curX+=fmBadge.stringWidth("MOM")+badgePadding*2+3;
+            }
+            if (cisdStoredConfirmed[i])
+                drawBadge(g2,"CONF",curX,cisTextY,fmBadge,badgePadding,badgeArc,new Color(255,215,0,150),Color.BLACK);
+        }
+    }
+    private void drawBadge(Graphics2D g2,String text,int x,int y,FontMetrics fm,int pad,int arc,Color bgColor,Color textColor){
+        int textWidth=fm.stringWidth(text);
+        int textHeight=fm.getAscent();
+        int badgeWidth=textWidth+pad*2;
+        int badgeHeight=textHeight+pad*2;
+        g2.setColor(bgColor);
+        g2.fillRoundRect(x,y-textHeight,badgeWidth,badgeHeight,arc,arc);
+        g2.setColor(textColor);
+        g2.drawString(text,x+pad,y);
+    }
+    /** [reference] decision tag from CISD_Journal_Decisions.csv (ENTERED/SKIPPED/IGNORED/REVIEW). */
+    private void drawJournalDecision(Graphics2D g2,String decision,int x,int y,boolean bullish,Font oldFont){
+        if (decision==null||decision.length()==0) return;
+        Color color="ENTERED".equals(decision)?new Color(0,170,80):
+                "SKIPPED".equals(decision)?new Color(220,75,75):
+                "IGNORED".equals(decision)?new Color(130,130,130):new Color(220,165,0);
+        String label="ENTERED".equals(decision)?"\u2713 ENTERED":
+                "SKIPPED".equals(decision)?"\u00d7 SKIPPED":
+                "IGNORED".equals(decision)?"\u2014 IGNORED":"\u231b REVIEW";
+        g2.setFont(oldFont.deriveFont(Font.BOLD,9f));
+        g2.setColor(color);
+        g2.drawString(label,x,bullish?y+16:y-16);
+    }
+    /** [reference drawSharedAlertsPanel] top-left cards for signals from ALL open charts (via SharedCISD.csv). */
+    private void drawSharedAlertsPanel(Graphics2D g2,IIndicatorDrawingSupport support,Font oldFont){
+        if (!sharedCISDAlerts||sharedAlertLines.isEmpty()) return;
+        Font cardFont=oldFont.deriveFont(Font.BOLD,8f);
+        g2.setFont(cardFont);
+        FontMetrics fm=g2.getFontMetrics();
+        int cardHeight=fm.getHeight()+4;
+        int cardPaddingX=4, cardArc=6;
+        int panelX=10, panelY=20;
+        for (int i=0;i<sharedAlertLines.size();i++){
+            String[] parts=sharedAlertLines.get(i);
+            if (parts.length<5) continue;
+            String sym=parts[0];
+            String tf=parts[1];
+            String type=parts[2];
+            boolean isBull=type.startsWith("+");
+            boolean retest="true".equals(parts[4]);
+            Color cardBg;
+            if (retest) cardBg=new Color(100,150,255,160);
+            else cardBg=isBull?new Color(0,180,0,160):new Color(255,60,60,160);
+            String arrow=isBull?"\u25B2":"\u25BC";
+            String displayText=arrow+" "+sym+"  ["+tf+"]";
+            if (retest) displayText+=" (R)";
+            if (showEntryPrice){
+                String entry=parts[3];
+                try {
+                    double ep=Double.parseDouble(entry);
+                    displayText+=" @ "+String.format(java.util.Locale.US,"%.5f",ep);
+                } catch (NumberFormatException ignored){ displayText+=" @ "+entry; }
+            }
+            int textWidth=fm.stringWidth(displayText);
+            int cardWidth=textWidth+cardPaddingX*2;
+            int cardY=panelY+i*(cardHeight+2);
+            g2.setColor(cardBg);
+            g2.fillRoundRect(panelX,cardY-fm.getAscent()-1,cardWidth,cardHeight,cardArc,cardArc);
+            g2.setColor(new Color(255,255,255,40));
+            g2.setStroke(new BasicStroke(0.7f));
+            g2.drawRoundRect(panelX,cardY-fm.getAscent()-1,cardWidth,cardHeight,cardArc,cardArc);
+            g2.setColor(new Color(30,30,30));
+            g2.drawString(displayText,panelX+cardPaddingX,cardY);
         }
     }
 

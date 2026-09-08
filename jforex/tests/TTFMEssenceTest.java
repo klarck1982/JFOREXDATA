@@ -18,6 +18,7 @@ public class TTFMEssenceTest {
     }
     static void eq(String name, double a, double b, double eps){ check(name, Math.abs(a-b)<=eps); }
     static TTFMEssence.RB rb(long t,double o,double h,double l,double c){ return new TTFMEssence.RB(t,o,h,l,c,0); }
+    static TTFMEssence.RB rb(long t,double o,double h,double l,double c,double v){ return new TTFMEssence.RB(t,o,h,l,c,v); }
     static TTFMEssence.CandleData cd(double o,double h,double l,double c,long t,boolean done){
         return new TTFMEssence.CandleData(o,h,l,c,t,done);
     }
@@ -211,15 +212,89 @@ public class TTFMEssenceTest {
         check("month bucket = 1st 00:00", TTFMEssence.periodStart(tue,TTFMEssence.MN1I,g3)==ms(1,0,0,g3));
         check("month bucket stable inside month", TTFMEssence.periodStart(ms(28,5,0,g3),TTFMEssence.MN1I,g3)==ms(1,0,0,g3));
 
-        // ---- the ONE agreed option: [CISD] Min Wave Length ----
+        // ---- CISD Desk option group (freeze 2026-09-08e): 15 options, [CISD] prefix ----
         TTFMEssence es=new TTFMEssence();
         check("option default = Medium", es.cisdSensitivity==1);
         check("minWaveFor mapping verbatim", TTFMEssence.minWaveFor(0)==3&&TTFMEssence.minWaveFor(1)==2&&TTFMEssence.minWaveFor(2)==1);
-        es.setOptInputParameter(0, Integer.valueOf(0));
+        es.setOptInputParameter(1, Integer.valueOf(0)); // idx1 = [CISD] Min Wave Length
         check("option Low stored raw 0 -> min 3", es.cisdSensitivity==0&&TTFMEssence.minWaveFor(es.cisdSensitivity)==3);
-        es.setOptInputParameter(0, Integer.valueOf(2));
+        es.setOptInputParameter(1, Integer.valueOf(2));
         check("option High stored raw 2 -> min 1", es.cisdSensitivity==2&&TTFMEssence.minWaveFor(es.cisdSensitivity)==1);
-        check("option info exposed", es.getOptInputParameterInfo(0)!=null && es.getOptInputParameterInfo(1)==null);
+        check("option group exposed (15 opts, idx0 Detection, idx1 MinWave)",
+            es.getOptInputParameterInfo(0)!=null && es.getOptInputParameterInfo(1)!=null
+            && es.getOptInputParameterInfo(14)!=null && es.getOptInputParameterInfo(15)==null
+            && es.getOptInputParameterInfo(0).getName().equals("[CISD] Detection")
+            && es.getOptInputParameterInfo(1).getName().equals("[CISD] Min Wave Length"));
+
+        // ---- Desk: Grade presets (reference applyCisdGrade) ----
+        TTFMEssence g1=new TTFMEssence();
+        g1.applyCisdGrade(1);
+        check("grade Premium presets", g1.trendFilter==1&&g1.minRetracement==1&&g1.marketStructureFilter==1
+            &&g1.higherTFConfirmation==1&&g1.momentumFilter==1&&!g1.volumeFilterEnabled);
+        TTFMEssence g2=new TTFMEssence();
+        g2.applyCisdGrade(2);
+        check("grade Ultimate presets", g2.trendFilter==2&&g2.minRetracement==3&&g2.marketStructureFilter==1
+            &&g2.higherTFConfirmation==1&&g2.momentumFilter==2&&g2.volumeFilterEnabled);
+        TTFMEssence g0=new TTFMEssence();
+        g0.trendFilter=2; g0.applyCisdGrade(0);
+        check("grade Standard keeps manual", g0.trendFilter==2);
+
+        // ---- Desk: eligibility math (reference isSignalEligible) ----
+        check("grade0 = AND of actives",
+            TTFMEssence.isSignalEligible(0,true,true,true,true,false, false,false,false,false,true)==false
+            && TTFMEssence.isSignalEligible(0,true,true,true,true,true, true,true,true,true,true)==true);
+        check("grade1 ratio 3/5=0.60 passes, 2/5 fails",
+            TTFMEssence.isSignalEligible(1,true,true,true,false,false, true,true,true,true,true)==true
+            && TTFMEssence.isSignalEligible(1,true,true,false,false,false, true,true,true,true,true)==false);
+        check("grade2 ratio 4/5=0.80 passes, 3/5 fails",
+            TTFMEssence.isSignalEligible(2,true,true,true,true,false, true,true,true,true,true)==true
+            && TTFMEssence.isSignalEligible(2,true,true,true,false,false, true,true,true,true,true)==false);
+        check("no active filters -> eligible", TTFMEssence.isSignalEligible(2,false,false,false,false,false, false,false,false,false,false)==true);
+        check("inactive filters always pass (grade0)",
+            TTFMEssence.isSignalEligible(0,true,true,true,true,true, false,false,false,false,false)==true);
+
+        // ---- Desk: trend filter EMA (reference passTrendFilter/getEMA) ----
+        TTFMEssence.RB[] flat=new TTFMEssence.RB[60];
+        for (int i=0;i<60;i++) flat[i]=rb(100+i*60000L,100,101,99,100,1000);
+        check("EMA flat series = value", Math.abs(TTFMEssence.getEMA(flat,59,50)-100.0)<1e-9);
+        flat[59]=rb(100+59*60000L,100,101,99,105,1000);
+        check("trend bullish: close above EMA50", TTFMEssence.passTrendFilter(flat,59,true,1)==true);
+        flat[59]=rb(100+59*60000L,100,101,99,95,1000);
+        check("trend bullish: close below EMA50 fails", TTFMEssence.passTrendFilter(flat,59,true,1)==false);
+        check("trend off always passes", TTFMEssence.passTrendFilter(flat,59,true,0)==true);
+
+        // ---- Desk: momentum + volume (reference passMomentumAndVolumeFilters) ----
+        TTFMEssence.RB[] mv=new TTFMEssence.RB[25];
+        for (int i=0;i<24;i++) mv[i]=rb(i*60000L,100,101,99,100,1000);
+        mv[24]=rb(24*60000L,100,106,99.5,105.5,2000); // big bar, closes in upper half
+        check("momentum Low: close in own half", TTFMEssence.passMomentumAndVolumeFilters(mv,24,true,1,false,1.2)==true);
+        check("momentum Medium: range>=1.2x avg(prev5)", TTFMEssence.passMomentumAndVolumeFilters(mv,24,true,2,false,1.2)==true);
+        check("volume: 2000 >= 1.2x1000", TTFMEssence.passMomentumAndVolumeFilters(mv,24,true,0,true,1.2)==true);
+        mv[24]=rb(24*60000L,100,106,99.5,105.5,100); // low volume
+        check("volume fails when below ratio", TTFMEssence.passMomentumAndVolumeFilters(mv,24,true,0,true,1.2)==false);
+        mv[24]=rb(24*60000L,100,100.8,99.5,99.7,2000); // closes in lower half
+        check("momentum Low fails on wrong half", TTFMEssence.passMomentumAndVolumeFilters(mv,24,true,1,false,1.2)==false);
+
+        // ---- Desk: market structure (reference checkMarketStructure) ----
+        TTFMEssence.RB[] ms=new TTFMEssence.RB[10];
+        for (int i=0;i<10;i++) ms[i]=rb(i*60000L,100,101,99,100,1000);
+        ms[2]=rb(2*60000L,100,101,97,100,1000);  // pivot low A
+        ms[6]=rb(6*60000L,100,101,98,100,1000);  // pivot low B higher than A
+        check("MS bullish: higher lows", TTFMEssence.checkMarketStructure(ms,true)==true);
+        check("MS bearish: needs lower highs -> false here", TTFMEssence.checkMarketStructure(ms,false)==false);
+
+        // ---- Desk: storage ring MAX 3 + shift (reference storeCisdSignal) ----
+        TTFMEssence ring=new TTFMEssence();
+        ring.cisdAlertSound="None"; ring.cisdRetestSound="None"; ring.sharedCISDAlerts=false; ring.saveLoadCISD=false;
+        for (int k=1;k<=4;k++)
+            ring.storeCisdSignal(1000L*k,2000L*k,100.0+k,99.0+k,true,2000L*k,false,false,null,false,"",true,true,true,true,true,true,true,true);
+        check("ring caps at 3", ring.cisdStoredCount==3);
+        check("ring shifted out oldest (idx0 = signal#2)", ring.cisdStoredStartTimes[0]==2000L&&ring.cisdStoredLevels[0]==102.0);
+        check("ring newest at idx count-1", ring.cisdStoredStartTimes[2]==4000L&&ring.cisdStoredLevels[2]==104.0);
+        check("ring flags reset on store", ring.cisdStoredActivationTime[2]==0&&ring.cisdStoredDeactivationTime[2]==Long.MAX_VALUE
+            &&!ring.cisdStoredLogged[2]&&!ring.cisdStoredRetestPlayed[2]);
+        ring.storeCisdSignal(4000L,2000L*4,104.0,103.0,true,8000L,false,false,null,false,"",true,true,true,true,true,true,true,true);
+        check("duplicate not stored twice", ring.cisdStoredCount==3&&ring.cisdStoredEndTimes[2]==8000L);
 
         // ---- regression 2026-09-08: 1H slot was 60h (60*60*60*1000) since v1 ----
         check("PERIOD table exact", java.util.Arrays.equals(TTFMEssence.PERIOD_INTERVALS,
