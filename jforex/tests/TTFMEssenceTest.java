@@ -27,6 +27,15 @@ public class TTFMEssenceTest {
         c.set(2026,Calendar.SEPTEMBER,day,hour,min,0); c.set(Calendar.MILLISECOND,0);
         return c.getTimeInMillis();
     }
+    static long ymd(int y,int mon,int day,int hour,int min,TimeZone tz){
+        Calendar c=Calendar.getInstance(tz);
+        c.set(y,mon,day,hour,min,0); c.set(Calendar.MILLISECOND,0);
+        return c.getTimeInMillis();
+    }
+    static int hourIn(TimeZone tz,long t){
+        Calendar c=Calendar.getInstance(tz); c.setTimeInMillis(t);
+        return c.get(Calendar.HOUR_OF_DAY);
+    }
 
     public static void main(String[] args){
         TimeZone g3=TimeZone.getTimeZone("GMT+3:00");
@@ -158,6 +167,79 @@ public class TTFMEssenceTest {
         long dStart=TTFMEssence.periodStart(t,24*3600000L,g3);
         check("daily bucket = GMT+3 midnight", dStart==ms(8,0,0,g3));
 
+        // ---- bucketing TZ = Europe/Athens (agreement 2026-09-09, TV match) ----
+        TimeZone ath=TimeZone.getTimeZone("Europe/Athens");
+        check("BUCKET_TZ locked to Europe/Athens", TTFMEssence.BUCKET_TZ.getID().equals("Europe/Athens"));
+        // summer (EEST=UTC+3): identical to the old GMT+3 freeze - verifications stand
+        long sepT=ymd(2026,Calendar.SEPTEMBER,8,10,30,ath);
+        check("summer: Athens == GMT+3 4H bucket",
+            TTFMEssence.periodStart(sepT,4*3600000L,ath)==TTFMEssence.periodStart(sepT,4*3600000L,g3));
+        check("summer: Athens == GMT+3 daily bucket",
+            TTFMEssence.periodStart(sepT,24*3600000L,ath)==TTFMEssence.periodStart(sepT,24*3600000L,g3));
+        // winter (EET=UTC+2): 1h fix vs the old freeze - matches platform + TV
+        long janT=ymd(2026,Calendar.JANUARY,15,10,30,ath);   // 08:30 UTC
+        check("winter: 4H bucket = 08:00 Athens wall",
+            TTFMEssence.periodStart(janT,4*3600000L,ath)==ymd(2026,Calendar.JANUARY,15,8,0,ath));
+        check("winter: Athens 4H != GMT+3 4H (the 1h fix)",
+            TTFMEssence.periodStart(janT,4*3600000L,ath)!=TTFMEssence.periodStart(janT,4*3600000L,g3));
+        check("winter: daily = Athens midnight",
+            TTFMEssence.periodStart(janT,24*3600000L,ath)==ymd(2026,Calendar.JANUARY,15,0,0,ath));
+        // EU DST boundaries 2026: spring Mar-29 (23h day), fall Oct-25 (25h day)
+        long marT=ymd(2026,Calendar.MARCH,29,10,30,ath);     // EEST by then
+        check("spring-fwd day: 4H grid absolute-stable (06:00Z)",
+            TTFMEssence.periodStart(marT,4*3600000L,ath)==ymd(2026,Calendar.MARCH,29,9,0,ath));
+        long octT=ymd(2026,Calendar.OCTOBER,25,10,30,ath);   // EET by then
+        check("fall-back day: 4H grid absolute-stable (05:00Z)",
+            TTFMEssence.periodStart(octT,4*3600000L,ath)==ymd(2026,Calendar.OCTOBER,25,7,0,ath));
+        // NY 08:00 open always stands 1h off the EET 4H grid (badge identifies it)
+        long nySum=TTFMEssence.nyOpenMillis(ymd(2026,Calendar.JULY,15,12,0,ny),ny);
+        check("summer NY open off 4H grid",
+            TTFMEssence.periodStart(nySum,4*3600000L,ath)!=nySum);
+        long nyWin=TTFMEssence.nyOpenMillis(ymd(2026,Calendar.JANUARY,15,12,0,ny),ny);
+        check("winter NY open off 4H grid",
+            TTFMEssence.periodStart(nyWin,4*3600000L,ath)!=nyWin);
+
+        // ---- per-symbol grid lock (agreement 2026-09-09) ----
+        check("grid constants", TTFMEssence.BUCKET_BRUSSELS.getID().equals("Europe/Brussels")
+            && TTFMEssence.BUCKET_NY.getID().equals("America/New_York"));
+        check("auto XAU/USD -> Brussels", TTFMEssence.autoGrid("XAU/USD")==TTFMEssence.BUCKET_BRUSSELS);
+        check("auto XAU/EUR -> Brussels", TTFMEssence.autoGrid("XAU/EUR")==TTFMEssence.BUCKET_BRUSSELS);
+        check("auto GOLD + case-insensitive", TTFMEssence.autoGrid("spot Gold")==TTFMEssence.BUCKET_BRUSSELS
+            && TTFMEssence.autoGrid("xauusd")==TTFMEssence.BUCKET_BRUSSELS);
+        check("auto USATECH.IDX -> EET", TTFMEssence.autoGrid("USATECH.IDX")==TTFMEssence.BUCKET_TZ);
+        check("auto USA500/USA30 -> EET", TTFMEssence.autoGrid("USA500.IDX")==TTFMEssence.BUCKET_TZ
+            && TTFMEssence.autoGrid("USA30.IDX")==TTFMEssence.BUCKET_TZ);
+        check("auto EUR/USD + GBP/USD -> EET", TTFMEssence.autoGrid("EUR/USD")==TTFMEssence.BUCKET_TZ
+            && TTFMEssence.autoGrid("GBP/USD")==TTFMEssence.BUCKET_TZ);
+        check("auto unknown/null -> EET default", TTFMEssence.autoGrid("OIL.WTI")==TTFMEssence.BUCKET_TZ
+            && TTFMEssence.autoGrid(null)==TTFMEssence.BUCKET_TZ);
+        check("resolve manual EET/Brussels/NY",
+            TTFMEssence.resolveGrid(1,"XAU/USD")==TTFMEssence.BUCKET_TZ
+            && TTFMEssence.resolveGrid(2,"EUR/USD")==TTFMEssence.BUCKET_BRUSSELS
+            && TTFMEssence.resolveGrid(3,"EUR/USD")==TTFMEssence.BUCKET_NY);
+        check("resolve invalid -> auto", TTFMEssence.resolveGrid(9,"XAU/USD")==TTFMEssence.BUCKET_BRUSSELS);
+        check("gridTag auto/manual", TTFMEssence.gridTag(0,"XAU/USD").equals("Brussels-auto")
+            && TTFMEssence.gridTag(0,"EUR/USD").equals("EET-auto")
+            && TTFMEssence.gridTag(2,"EUR/USD").equals("Brussels-manual")
+            && TTFMEssence.gridTag(3,"XAU/USD").equals("NY-manual"));
+        // Brussels bucket spot (Sept CEST=UTC+2): 10:30 -> 08:00 wall, 1h off EET
+        TimeZone bru=TimeZone.getTimeZone("Europe/Brussels");
+        long bT=ymd(2026,Calendar.SEPTEMBER,8,10,30,bru);   // 08:30 UTC
+        check("brussels 4H bucket = 08:00 wall",
+            TTFMEssence.periodStart(bT,4*3600000L,bru)==ymd(2026,Calendar.SEPTEMBER,8,8,0,bru));
+        check("brussels 4H != EET 4H (1h apart)",
+            TTFMEssence.periodStart(bT,4*3600000L,bru)!=TTFMEssence.periodStart(bT,4*3600000L,ath));
+        // [Bucketing] Grid option idx17, default Auto, togglable
+        TTFMEssence eg=new TTFMEssence();
+        check("grid option default Auto", eg.gridMode==0);
+        check("grid option exposed (idx17)",
+            eg.getOptInputParameterInfo(17)!=null
+            && eg.getOptInputParameterInfo(17).getName().equals("[Bucketing] Grid"));
+        eg.setOptInputParameter(17, Integer.valueOf(2));
+        check("grid option toggles Brussels", eg.gridMode==2);
+        eg.setOptInputParameter(17, Integer.valueOf(0));
+        check("grid option back to Auto", eg.gridMode==0);
+
         // ---- sessions ----
         check("session NY", TTFMEssence.sessionOf(ms(8,10,0,ny),ny).equals("NY"));
         check("session London", TTFMEssence.sessionOf(ms(8,3,0,ny),ny).equals("London"));
@@ -220,9 +302,9 @@ public class TTFMEssenceTest {
         check("option Low stored raw 0 -> min 3", es.cisdSensitivity==0&&TTFMEssence.minWaveFor(es.cisdSensitivity)==3);
         es.setOptInputParameter(1, Integer.valueOf(2));
         check("option High stored raw 2 -> min 1", es.cisdSensitivity==2&&TTFMEssence.minWaveFor(es.cisdSensitivity)==1);
-        check("option group exposed (15 opts, idx0 Detection, idx1 MinWave)",
+        check("option group exposed (18 opts, idx0 Detection, idx1 MinWave)",
             es.getOptInputParameterInfo(0)!=null && es.getOptInputParameterInfo(1)!=null
-            && es.getOptInputParameterInfo(14)!=null && es.getOptInputParameterInfo(15)==null
+            && es.getOptInputParameterInfo(17)!=null && es.getOptInputParameterInfo(18)==null
             && es.getOptInputParameterInfo(0).getName().equals("[CISD] Detection")
             && es.getOptInputParameterInfo(1).getName().equals("[CISD] Min Wave Length"));
 
@@ -295,6 +377,72 @@ public class TTFMEssenceTest {
             &&!ring.cisdStoredLogged[2]&&!ring.cisdStoredRetestPlayed[2]);
         ring.storeCisdSignal(4000L,2000L*4,104.0,103.0,true,8000L,false,false,null,false,"",true,true,true,true,true,true,true,true);
         check("duplicate not stored twice", ring.cisdStoredCount==3&&ring.cisdStoredEndTimes[2]==8000L);
+
+        // ---- session overlay (agreement 2026-09-09): NY 08:00 DST-safe, no fixed offset ----
+        TimeZone utc=TimeZone.getTimeZone("UTC");
+        TimeZone eet=TimeZone.getTimeZone("GMT+2:00");   // EET winter (fixed)
+        TimeZone eest=TimeZone.getTimeZone("GMT+3:00");  // EEST summer (fixed)
+        // winter (EST): NY 08:00 = 13:00 UTC = 15:00 EET
+        long wOpen=TTFMEssence.nyOpenMillis(ymd(2026,Calendar.JANUARY,15,10,30,ny),ny);
+        check("nyOpen winter exact", wOpen==ymd(2026,Calendar.JANUARY,15,8,0,ny));
+        check("nyOpen winter = 13:00 UTC", hourIn(utc,wOpen)==13);
+        check("nyOpen winter = 15:00 EET", hourIn(eet,wOpen)==15);
+        // summer (EDT): NY 08:00 = 12:00 UTC = 15:00 EEST
+        long sOpen=TTFMEssence.nyOpenMillis(ymd(2026,Calendar.JULY,15,20,0,ny),ny);
+        check("nyOpen summer exact", sOpen==ymd(2026,Calendar.JULY,15,8,0,ny));
+        check("nyOpen summer = 12:00 UTC", hourIn(utc,sOpen)==12);
+        check("nyOpen summer = 15:00 EEST", hourIn(eest,sOpen)==15);
+        // US spring-forward 2026-03-08 (EU still standard until 03-29): gap week
+        long gOpen=TTFMEssence.nyOpenMillis(ymd(2026,Calendar.MARCH,10,14,0,ny),ny);
+        check("nyOpen gap-week March exact", gOpen==ymd(2026,Calendar.MARCH,10,8,0,ny));
+        check("nyOpen gap-week March = 12:00 UTC (no 1h drift)", hourIn(utc,gOpen)==12);
+        // EU back to standard 10-25, US still DST until 11-01: gap week again
+        long oOpen=TTFMEssence.nyOpenMillis(ymd(2026,Calendar.OCTOBER,27,9,0,ny),ny);
+        check("nyOpen gap-week Oct exact", oOpen==ymd(2026,Calendar.OCTOBER,27,8,0,ny));
+        check("nyOpen gap-week Oct = 12:00 UTC", hourIn(utc,oOpen)==12);
+        long nOpen=TTFMEssence.nyOpenMillis(ymd(2026,Calendar.NOVEMBER,3,9,0,ny),ny);
+        check("nyOpen Nov standard = 13:00 UTC", hourIn(utc,nOpen)==13);
+        // stepping: exactly one NY day across DST switches (23h spring / 25h fall)
+        long fri=TTFMEssence.nyOpenMillis(ymd(2026,Calendar.MARCH,6,12,0,ny),ny);   // Fri
+        long sat=TTFMEssence.nextNyOpen(fri,ny);
+        long sun=TTFMEssence.nextNyOpen(sat,ny);   // Sun 03-08 spring-forward day
+        long mon=TTFMEssence.nextNyOpen(sun,ny);
+        check("nextNyOpen Sat after Fri", sat==ymd(2026,Calendar.MARCH,7,8,0,ny));
+        check("nextNyOpen Sun after Sat", sun==ymd(2026,Calendar.MARCH,8,8,0,ny));
+        check("nextNyOpen spring gap = 23h", (sun-sat)==23*3600000L);
+        check("nextNyOpen Mon after Sun", mon==ymd(2026,Calendar.MARCH,9,8,0,ny));
+        check("nextNyOpen back to 24h", (mon-sun)==24*3600000L);
+        long fSat=TTFMEssence.nyOpenMillis(ymd(2026,Calendar.OCTOBER,31,12,0,ny),ny);
+        long fSun=TTFMEssence.nextNyOpen(fSat,ny);   // Sun 11-01 fall-back day
+        check("nextNyOpen fall gap = 25h", (fSun-fSat)==25*3600000L);
+        // weekend skip
+        check("Sat skipped", TTFMEssence.isNyWeekend(ymd(2026,Calendar.SEPTEMBER,5,8,0,ny),ny));
+        check("Sun skipped", TTFMEssence.isNyWeekend(ymd(2026,Calendar.SEPTEMBER,6,8,0,ny),ny));
+        check("Mon drawn", !TTFMEssence.isNyWeekend(ymd(2026,Calendar.SEPTEMBER,7,8,0,ny),ny));
+        check("Fri drawn", !TTFMEssence.isNyWeekend(ymd(2026,Calendar.SEPTEMBER,4,8,0,ny),ny));
+        // panel session samples (sessionOf on last bar)
+        check("panel Asia", TTFMEssence.sessionOf(ms(8,20,0,ny),ny).equals("Asia"));
+        check("panel Closed", TTFMEssence.sessionOf(ms(8,17,30,ny),ny).equals("Closed"));
+        // overlay options: OFF by default, togglable, appended after CISD group
+        check("session overlay defaults OFF", !es.showNyOpenLine&&!es.showSessionInPanel);
+        check("session overlay options exposed (idx15/16)",
+            es.getOptInputParameterInfo(15)!=null && es.getOptInputParameterInfo(16)!=null
+            && es.getOptInputParameterInfo(15).getName().equals("[Sessions] Show NY Open Line")
+            && es.getOptInputParameterInfo(16).getName().equals("[Sessions] Show Session in Panel"));
+        es.setOptInputParameter(15, Integer.valueOf(1));
+        es.setOptInputParameter(16, Integer.valueOf(1));
+        check("session overlay toggles ON", es.showNyOpenLine&&es.showSessionInPanel);
+        es.setOptInputParameter(15, Integer.valueOf(0));
+        es.setOptInputParameter(16, Integer.valueOf(0));
+        check("session overlay toggles OFF", !es.showNyOpenLine&&!es.showSessionInPanel);
+
+        // ---- snapToBar: exact bar time for getXForTime (fix 2026-09-09) ----
+        long[] sbt={1000L,2000L,3000L,5000L};
+        check("snap exact hit", TTFMEssence.snapToBar(sbt,3000L)==3000L);
+        check("snap mid-bar floors", TTFMEssence.snapToBar(sbt,4500L)==3000L);
+        check("snap before first -> -1", TTFMEssence.snapToBar(sbt,500L)==-1);
+        check("snap after last -> last", TTFMEssence.snapToBar(sbt,9999L)==5000L);
+        check("snap null/empty -> -1", TTFMEssence.snapToBar(null,1000L)==-1&&TTFMEssence.snapToBar(new long[0],1000L)==-1);
 
         // ---- regression 2026-09-08: 1H slot was 60h (60*60*60*1000) since v1 ----
         check("PERIOD table exact", java.util.Arrays.equals(TTFMEssence.PERIOD_INTERVALS,

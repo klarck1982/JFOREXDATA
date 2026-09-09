@@ -38,7 +38,15 @@ package com.dukascopy.indicators;
  *    Panel time = YOUR live clock in chart timezone [panel-time correction]
  *    Bias = official NEXT-DAY MODEL on the DAILY candle, neutral possible
  *                  [user lock 2026-09-08]
- *    Chart bucketing TZ = GMT+3, midnight anchor (matches locked TV match)
+ *    Chart bucketing TZ = Europe/Athens (EET+DST, agreement 2026-09-09),
+ *      midnight anchor: == TV FOREX.com grid + JForex Day start EET, summer
+ *      identical to the old GMT+3 freeze, winter fixes the 1h latent drift
+ *    Display TZ (C labels + panel clock) = frozen New York: immune to the
+ *      platform Day start setting, matches the axis + the user's TV (UTC-4)
+ *    GRID LOCK (agreement 2026-09-09 - per-symbol TV grids, JForex op point
+ *      Day start = EET): US100/US500/US30 + EURUSD/GBPUSD = EET (Athens);
+ *      XAUUSD/XAUEUR (XAU/GOLD names) = Brussels. [Bucketing] Grid option
+ *      {Auto/EET/Brussels/NY}, default Auto; panel always shows "Grid: X".
  *    SMT = NOT in this build (deferred by user until experiment succeeds)
  *
  *  THE NINE APPROVED ELEMENTS (user lock "approve the list", 2026-09-08;
@@ -54,9 +62,18 @@ package com.dukascopy.indicators;
  *      (correction 2026-09-08c: state colors valid/tighten/failed and TP lines
  *       are OFF - engine still computes them internally, nothing is drawn)
  *    8 projection ladder (5 gray levels + dotted leg-start line)
- *    9 info panel: symbol line, model line, YOUR live clock, Bias line
+ *    9 info panel: symbol line, model line, grid line, YOUR live clock, Bias line
  *
  *  [C]=official concept  [J]=Java reference mechanics  [O]=our definition
+ *
+ *  SESSION OVERLAY (user agreement 2026-09-09 - backtest aid, OFF by default):
+ *    [Sessions] Show NY Open Line: dotted BLACK vertical at 08:00 New York on
+ *      each weekday + black badge tag "NY 8:00" on its own row below the
+ *      C-labels (agreement 2026-09-09A); Sat/Sun skipped.
+ *    [Sessions] Show Session in Panel: "Session: Asia/London/NY/Closed" line
+ *      appended to the info panel (existing sessionOf on the last bar).
+ *    NY time via the real America/New_York calendar (DST-safe, no fixed
+ *    offset); EET/4H chart bucketing untouched.
  *
  *  ================= REFERENCE CLONE: CISD DESK (freeze 2026-09-08e) ========
  *  User lock: "clone the CISD concept with its cards, settings, filters,
@@ -206,8 +223,20 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     }
     private static final int ANCHOR_LAYER = 1;          // 4H unified reference
     private static final int BIAS_LAYER   = 2;          // Daily = Next-Day Model source
-    private static final TimeZone CHART_TZ = TimeZone.getTimeZone("GMT+3:00");  // locked TV match
-    private static final int HTF_ANCHOR = 0;            // midnight of CHART_TZ
+    // Bucketing TZ: EET with EU DST (agreement 2026-09-09, TV match). Summer =
+    // UTC+3 (identical to the old GMT+3 freeze, all past verifications stand);
+    // winter = UTC+2 (fixes the 1h latent drift vs platform + TV). JForex
+    // operating point stays Day start = EET; TV FOREX.com grid proven == EET.
+    static final TimeZone BUCKET_TZ = TimeZone.getTimeZone("Europe/Athens");
+    // Per-symbol TV grids (agreement 2026-09-09): XAU/GOLD = Brussels, US
+    // indices + EUR/GBP majors = EET(Athens); NY exists for manual override.
+    static final TimeZone BUCKET_BRUSSELS = TimeZone.getTimeZone("Europe/Brussels");
+    static final TimeZone BUCKET_NY = TimeZone.getTimeZone("America/New_York");
+    // Display TZ: frozen New York (agreement 2026-09-09). Labels + panel clock
+    // no longer follow the platform Day start setting; they match the axis
+    // (Time zone = New York) and the user's TV chart (UTC-4).
+    private static final TimeZone DISPLAY_TZ = TimeZone.getTimeZone("America/New_York");
+    private static final int HTF_ANCHOR = 0;            // midnight of BUCKET_TZ
     private static final boolean CISD_IGNORE_INSIDE = true;
     private static final int ACTIVE_SESSIONS = 1;       // London + NY
 
@@ -217,6 +246,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     private interface OptInputSetter { void set(Object v); }
     private static final int[] SENS_VALUES = {0,1,2};
     private static final String[] SENS_NAMES = {"Low (min 3 candles)","Medium (min 2 candles)","High (min 1 candle)"};
+    private static final int[] GRID_VALUES = {0,1,2,3};
+    private static final String[] GRID_NAMES = {"Auto (symbol-locked)","EET (Athens)","Brussels","New York"};
     private static final int[] BOOLEAN_VALUES = {0,1};
     private static final String[] BOOLEAN_NAMES = {"No","Yes"};
     private static final int[] RESET_VALUES = {0,1};
@@ -257,6 +288,12 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     int maxSharedLines = 5;
     boolean saveLoadCISD = true;
     boolean cisdLoaded = false;
+
+    // Session overlay (agreement 2026-09-09): both OFF by default
+    boolean showNyOpenLine = false;
+    boolean showSessionInPanel = false;
+    // Bucketing grid (agreement 2026-09-09): 0=Auto(symbol) 1=EET 2=Brussels 3=NY
+    int gridMode = 0;
     private long sharedFileLastModified = 0;
     private final Object sharedFileLock = new Object();
     private final List<String[]> sharedAlertLines = new ArrayList<>();
@@ -323,6 +360,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     }
 
     private long lastChartPeriodMs = -1;
+    private String lastGridId = "";
+    private String lastInstrument = "";
     private int currentBias = 0;
     private boolean currentInversion = false;
     private double chartAvgRange = 0;
@@ -335,6 +374,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     private long chartNowTime = 0;
     private long chartPeriodMs = 0;
     private LayerData drawAnchor = null;
+    private long[] drawTimes = null;   // chart bar times for the session overlay
 
     // ==================================================================
     //  PURE LOGIC CORE (verbatim from locked TTFMCore)
@@ -405,6 +445,62 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             case 3: return s.equals("NY");
             default: return true;
         }
+    }
+
+    /** [O session overlay] absolute millis of 08:00 New York on the NY-calendar
+     *  day containing timeMs. DST-safe: real America/New_York calendar, never a
+     *  fixed offset (08:00 itself is never ambiguous on DST switch days). */
+    static long nyOpenMillis(long timeMs, TimeZone ny){
+        Calendar cal=Calendar.getInstance(ny); cal.setTimeInMillis(timeMs);
+        cal.set(Calendar.HOUR_OF_DAY,8);cal.set(Calendar.MINUTE,0);cal.set(Calendar.SECOND,0);cal.set(Calendar.MILLISECOND,0);
+        return cal.getTimeInMillis();
+    }
+    /** [O session overlay] next NY-day 08:00 after the given open (exactly one
+     *  NY calendar day ahead: 23/24/25h across DST switches). */
+    static long nextNyOpen(long openMillis, TimeZone ny){
+        return nyOpenMillis(openMillis+24*60*60*1000L,ny);
+    }
+    /** [O session overlay] Sat/Sun NY days print no open line (no backtest bars). */
+    static boolean isNyWeekend(long openMillis, TimeZone ny){
+        Calendar cal=Calendar.getInstance(ny); cal.setTimeInMillis(openMillis);
+        int d=cal.get(Calendar.DAY_OF_WEEK);
+        return d==Calendar.SATURDAY||d==Calendar.SUNDAY;
+    }
+    /** [O grid lock 2026-09-09] symbol -> TV grid. XAU/GOLD trade the Brussels
+     *  grid; US indices + EUR/GBP majors trade EET (all proven vs TV); anything
+     *  unknown defaults to EET (always visible in panel, override exists). */
+    static TimeZone autoGrid(String instrument){
+        if (instrument!=null){
+            String u=instrument.toUpperCase(java.util.Locale.US);
+            if (u.contains("XAU")||u.contains("GOLD")) return BUCKET_BRUSSELS;
+        }
+        return BUCKET_TZ;
+    }
+    /** [O] effective grid: 0=Auto(symbol), 1=EET, 2=Brussels, 3=NY. */
+    static TimeZone resolveGrid(int mode,String instrument){
+        if (mode==1) return BUCKET_TZ;
+        if (mode==2) return BUCKET_BRUSSELS;
+        if (mode==3) return BUCKET_NY;
+        return autoGrid(instrument);
+    }
+    /** [O] short panel tag, e.g. "EET-auto" / "Brussels-manual". */
+    static String gridTag(int mode,String instrument){
+        TimeZone tz=resolveGrid(mode,instrument);
+        String base=tz==BUCKET_BRUSSELS?"Brussels":tz==BUCKET_NY?"NY":"EET";
+        return base+(mode==0?"-auto":"-manual");
+    }
+
+    /** [O session overlay] open time of the chart bar containing t (last bar
+     *  time <= t), or -1. Guarantees an EXACT bar time for getXForTime. */
+    static long snapToBar(long[] times,long t){
+        if (times==null||times.length==0) return -1;
+        int lo=0,hi=times.length-1,ans=-1;
+        while (lo<=hi){
+            int mid=(lo+hi)>>>1;
+            if (times[mid]<=t){ ans=mid; lo=mid+1; }
+            else hi=mid-1;
+        }
+        return ans<0?-1:times[ans];
     }
 
     static void aggregate(LayerData layer, RB bar, long intervalMs, TimeZone tz){
@@ -629,6 +725,14 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         set.add(v->saveLoadCISD=((Integer)v)==1);
         opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[CISD] Reset CISD Signals",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,RESET_VALUES,RESET_NAMES)));
         set.add(v->{ if ((Integer)v==1) resetCISDData(); });
+        // Session overlay (agreement 2026-09-09): opt-in, OFF by default
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[Sessions] Show NY Open Line",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->showNyOpenLine=((Integer)v)==1);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[Sessions] Show Session in Panel",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->showSessionInPanel=((Integer)v)==1);
+        // Per-symbol TV grid (agreement 2026-09-09): Auto resolves by instrument
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[Bucketing] Grid",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,GRID_VALUES,GRID_NAMES)));
+        set.add(v->gridMode=(Integer)v);
         optInfos=opt.toArray(new com.dukascopy.api.indicators.OptInputParameterInfo[0]);
         optSetters=set.toArray(new OptInputSetter[0]);
     }
@@ -665,15 +769,19 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         for (int i=0;i<ibars.length;i++) bars[i]=toRB(ibars[i]);
 
         long periodMs=context.getFeedDescriptor().getPeriod().getInterval();
-        if (periodMs!=lastChartPeriodMs){
+        TimeZone gridTz=activeGridTz();
+        String inst=currentInstrumentName();
+        if (periodMs!=lastChartPeriodMs||!gridTz.getID().equals(lastGridId)||!inst.equals(lastInstrument)){
             lastChartPeriodMs=periodMs;
+            lastGridId=gridTz.getID();
+            lastInstrument=inst;
             cisdStoredCount=0; pendingBullish.active=false; pendingBearish.active=false;
             fibCacheWaveStart=-1; fibCacheResult=null; lastAlertStartTime=0; lastAlertLevel=Double.NaN;
             sharedAlertLines.clear(); sharedFileLastModified=0; cisdLoaded=false;
             currentBias=0; currentInversion=false;
             for (LayerData l:layers){ l.historical.clear(); l.curActive=false; l.curO=l.curH=l.curL=l.curC=Double.NaN; l.curStart=0; }
         }
-        TimeZone tz=CHART_TZ;
+        TimeZone tz=gridTz;
 
         int[] al=autoLayers(periodMs);          // AUTO layers freeze 2026-09-08d
         layers[0].periodIndex=al[0];
@@ -690,6 +798,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
 
         chartPeriodMs=periodMs;
         chartNowTime=bars[bars.length-1].time;
+        drawTimes=new long[bars.length];
+        for (int i=0;i<bars.length;i++) drawTimes[i]=bars[i].time;
         LayerData primary=layers[ANCHOR_LAYER-1];
         drawAnchor=primary;
         updateNdmBias(layers[BIAS_LAYER-1]);
@@ -1130,6 +1240,11 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
 
     // ---------------- files: journal CSV / properties / shared / decisions ----------------
     private File filesDir(){ return context.getFilesDir(); }   // real JForex API returns File
+    private String currentInstrumentName(){
+        try { return context.getFeedDescriptor().getInstrument().toString(); }
+        catch (Exception e){ return ""; }
+    }
+    private TimeZone activeGridTz(){ return resolveGrid(gridMode,currentInstrumentName()); }
     private String currentTfShort(){ return tfShort(context.getFeedDescriptor().getPeriod().getInterval()); }
     private long currentPeriodMs(){ return context.getFeedDescriptor().getPeriod().getInterval(); }
 
@@ -1518,7 +1633,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
                     }
                     g2.setColor(CLOSURE_COLOR);g2.setStroke(dashStroke(1,2));
                     g2.drawLine(xOpen,0,xOpen,ch-1);
-                    SimpleDateFormat lf=new SimpleDateFormat(colRangePattern(periodMs));lf.setTimeZone(support.getJFTimeZone().getTimeZone());
+                    SimpleDateFormat lf=new SimpleDateFormat(colRangePattern(periodMs));lf.setTimeZone(DISPLAY_TZ);
                     String t="C"+(candleIdx+1)+" ("+lf.format(new Date(cd.openTime))+"-"+lf.format(new Date(cd.openTime+periodMs))+")";
                     g2.setFont(oldFont.deriveFont(Font.BOLD,9f));
                     int tw=g2.getFontMetrics().stringWidth(t);
@@ -1534,6 +1649,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             drawSharedAlertsPanel(g2,support,oldFont);
             drawTspot(g2,support);               // elements 4,5,6
             drawProjLadder(g2,support);          // element 9
+            drawNyOpenLines(g2,support,oldFont); // session overlay (opt-in, OFF default)
             drawInfoPanel(g2,support,oldFont);   // element 10
         }
 
@@ -1769,20 +1885,62 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         }
     }
 
-    /** element 10: 4-line panel - symbol, model, YOUR live clock (chart TZ), Bias (NDM daily). */
+    /** session overlay (agreement 2026-09-09, opt-in): dotted BLACK vertical at
+     *  08:00 New York on each visible weekday + tiny tag on its own row.
+     *  Locked line style; nothing drawn when OFF, off-screen, or on weekend.
+     *  NOTE (fix 2026-09-09): iterates loaded days and lets getXForTime filter
+     *  off-screen itself - screen candle indices are NEVER used as bar-array
+     *  indices (the reference never does that; they diverge in replay/scroll). */
+    private void drawNyOpenLines(Graphics2D g2,IIndicatorDrawingSupport support,Font oldFont){
+        if (!showNyOpenLine||drawTimes==null||drawTimes.length==0||chartNowTime<=0) return;
+        long firstT=-1;
+        for (long tm:drawTimes){ if (tm>0){ firstT=tm; break; } }
+        if (firstT<=0) return;
+        int ch=support.getChartHeight();
+        int cw=support.getChartWidth();
+        g2.setFont(oldFont.deriveFont(Font.BOLD,9f));
+        FontMetrics fmTag=g2.getFontMetrics();
+        String tag="NY 8:00";
+        int badgeW=fmTag.stringWidth(tag)+2*3;
+        long open=nyOpenMillis(firstT,nyTZ);
+        int guard=0;
+        while (open<=chartNowTime&&guard++<1200){
+            if (!isNyWeekend(open,nyTZ)){
+                long snapped=snapToBar(drawTimes,open);
+                if (snapped>0){
+                    int x=support.getXForTime(snapped,false);
+                    if (x>=0){
+                        g2.setColor(CLOSURE_COLOR);
+                        g2.setStroke(dashStroke(1,2));
+                        g2.drawLine(x,0,x,ch-1);
+                        int tx=(x+4+badgeW>cw)?x-badgeW-3:x+4;
+                        drawBadge(g2,tag,tx,24,fmTag,3,4,Color.BLACK,Color.WHITE);
+                    }
+                }
+            }
+            open=nextNyOpen(open,nyTZ);
+        }
+    }
+
+    /** element 10: panel - symbol, model, grid (always visible), YOUR live clock
+     *  (frozen NY), Bias (NDM daily), Session (opt-in). */
     private void drawInfoPanel(Graphics2D g2,IIndicatorDrawingSupport support,Font oldFont){
         boolean bull=(currentBias!=0)?currentBias>0:structTrend>0;
         String tf=chartPeriodMs>0?tfShort(chartPeriodMs):"-";
         String htf=drawAnchor!=null?tfShort(PERIOD_INTERVALS[drawAnchor.periodIndex]):"-";
         SimpleDateFormat tfmt=new SimpleDateFormat("HH:mm:ss");
-        tfmt.setTimeZone(support.getJFTimeZone().getTimeZone());
+        tfmt.setTimeZone(DISPLAY_TZ);
         String timeS=tfmt.format(new Date(System.currentTimeMillis()));
         List<String> ls=new ArrayList<>(); List<Boolean> big=new ArrayList<>();
         ls.add(chartSymShort()+(bull?"\u2191!":"\u2193!")+" ("+tf+")"); big.add(Boolean.FALSE);
         ls.add(tf+"-"+htf+" Model"); big.add(Boolean.FALSE);
+        ls.add("Grid: "+gridTag(gridMode,currentInstrumentName())); big.add(Boolean.FALSE);
         ls.add(timeS); big.add(Boolean.TRUE);
         String biasS=(currentBias!=0)?(currentBias>0?"Bullish":"Bearish"):"Neutral";
         ls.add("Bias: "+biasS); big.add(Boolean.FALSE);
+        if (showSessionInPanel&&chartNowTime>0){
+            ls.add("Session: "+sessionOf(chartNowTime,nyTZ)); big.add(Boolean.FALSE);
+        }
         Font f11=new Font(Font.MONOSPACED,Font.PLAIN,11);
         Font f16=new Font(Font.MONOSPACED,Font.BOLD,16);
         int w=0,h=0;

@@ -2,7 +2,7 @@
 
 كل شيء: سجل النقاش الكامل، الكود (النسخة الكاملة + النسخة الجوهرية)، الاختبارات،
 الصور الرسمية وصور المستخدم، الأدلة، المرجع PDF، والفيديو الرسمي.
-آخر تحديث: 2026-09-08
+آخر تحديث: 2026-09-09
 
 ## الفهرس
 
@@ -14,8 +14,8 @@
 | `archive/PUBLISH-AR.md` | دليل نشر الأرشيف على الإنترنت (4 طرق) |
 | `archive/MANIFEST inside site/` | بصمات SHA-256 لكل أصل — للتحقق من عدم الفقدان |
 | `jforex/TTFMCore.java` | المؤشر الكامل (55 خياراً) — الخطوات 1-3 مقفلة |
-| `jforex/TTFMEssence.java` | **النسخة الجوهرية** — إعداد واحد يتيم `[CISD] Min Wave Length`، تسعة عناصر مقفلة |
-| `jforex/tests/` | 133 اختباراً للـ Core + 70 للـ Essence |
+| `jforex/TTFMEssence.java` | **النسخة الجوهرية** — 18 خياراً (CISD Desk 15 + Sessions 2 + Bucketing 1)، تسعة عناصر + session overlay + شبكات TV لكل رمز |
+| `jforex/tests/` | 134 اختباراً للـ Core + 171 للـ Essence |
 | `jforex/docs/` | دليل الإعدادات، رسوم SVG، ملاحظات الفيديو، التحقق البكسلي، فريمات الفيديو |
 | `jforex/tools/` | أدوات التحقق البكسلي (verify_tspot.py وغيرها) |
 | `jforex/*_backup.java` | نسخ مقفلة لكل خطوة (1، 2، 2b، 3، v2، v3full) |
@@ -29,8 +29,8 @@
 cd jforex
 javac -nowarn -encoding UTF-8 -d _compilecheck/out -sourcepath _compilecheck/stubs \
       TTFMCore.java TTFMEssence.java tests/TTFMCoreCoreTest.java tests/TTFMEssenceTest.java
-java -cp _compilecheck/out com.dukascopy.indicators.TTFMCoreCoreTest   # 133/133
-java -cp _compilecheck/out com.dukascopy.indicators.TTFMEssenceTest    # 70/70
+java -cp _compilecheck/out com.dukascopy.indicators.TTFMCoreCoreTest   # 134/134
+java -cp _compilecheck/out com.dukascopy.indicators.TTFMEssenceTest    # 171/171
 ```
 
 ## حالة المشروع
@@ -38,7 +38,8 @@ java -cp _compilecheck/out com.dukascopy.indicators.TTFMEssenceTest    # 70/70
 - Essence: تسعة عناصر مقفلة بالقائمة («اعتمد القائمة») + تصويحات 2026-09-08b/c (وسوم المنصة مشطوبة، الحالات وTP مطفأة رسماً).
 - Bias في Essence: Next-Day Model الرسمي على الشمعة اليومية (مع حالة Neutral).
 - SMT: مؤجل لما بعد نجاح التجربة.
-- بانتظار: التحقق البصري للمستخدم ثم قفل «اعتمد Essence».
+- **«اعتمد» 2026-09-09 (Essence):** session overlay (خط NY 08:00 بشارة + سطر الجلسة، opt-in) + إعادة تثبيت التجميع على EET+DST (أثينا، مطابقة TV وإصلاح انزياح الشتاء) + شبكات TV لكل رمز (EET للمؤشرات/العملات، Brussels للذهب، خيار `[Bucketing] Grid` + سطر `Grid:` دائم).
+- نقطة التشغيل: JForex على `Day start = EET` دائماً (على الذهب المنصة تختلف والمؤشر هو المرجع المطابق لـ TV).
 
 ## المصادر النظرية
 ttrades.com — Next Day Model، Full Guide، Projections Guide، Equilibrium in Continuations.
