@@ -308,13 +308,14 @@ public class TTFMEssenceTest {
         check("option Low stored raw 0 -> min 3", es.cisdSensitivity==0&&TTFMEssence.minWaveFor(es.cisdSensitivity)==3);
         es.setOptInputParameter(1, Integer.valueOf(2));
         check("option High stored raw 2 -> min 1", es.cisdSensitivity==2&&TTFMEssence.minWaveFor(es.cisdSensitivity)==1);
-        check("option group exposed (19 opts, idx0 Detection, idx1 MinWave)",
+        check("option group exposed (20 opts, idx0 Detection, idx1 MinWave)",
             es.getOptInputParameterInfo(0)!=null && es.getOptInputParameterInfo(1)!=null
             && es.getOptInputParameterInfo(17)!=null && es.getOptInputParameterInfo(18)!=null
-            && es.getOptInputParameterInfo(19)==null
+            && es.getOptInputParameterInfo(19)!=null && es.getOptInputParameterInfo(20)==null
             && es.getOptInputParameterInfo(0).getName().equals("[CISD] Detection")
             && es.getOptInputParameterInfo(1).getName().equals("[CISD] Min Wave Length")
-            && es.getOptInputParameterInfo(18).getName().equals("[SMT] Detection"));
+            && es.getOptInputParameterInfo(18).getName().equals("[SMT] Detection")
+            && es.getOptInputParameterInfo(19).getName().equals("[Display] Show Timer"));
 
         // ---- Desk: Grade presets (reference applyCisdGrade) ----
         TTFMEssence g1=new TTFMEssence();
@@ -533,6 +534,20 @@ public class TTFMEssenceTest {
         check("smt option toggles ON", es.showSMT);
         es.setOptInputParameter(18, Integer.valueOf(0));
         check("smt option toggles OFF", !es.showSMT);
+
+        // ---- countdown timer (agreement 2026-09-10, D6 wall clock, default ON) ----
+        check("timer format 01:02:18", TTFMEssence.countdownText(3738000L).equals("01:02:18"));
+        check("timer format 00:59:59", TTFMEssence.countdownText(3599000L).equals("00:59:59"));
+        check("timer >24h (weekend D) = 25:00:00", TTFMEssence.countdownText(25*3600000L).equals("25:00:00"));
+        check("timer zero -> empty (not drawn)", TTFMEssence.countdownText(0).equals(""));
+        check("timer negative (replay) -> empty (not drawn)", TTFMEssence.countdownText(-5000L).equals(""));
+        check("timer option default ON + exposed idx19", es.showTimer
+            && es.getOptInputParameterInfo(19)!=null
+            && es.getOptInputParameterInfo(19).getName().equals("[Display] Show Timer"));
+        es.setOptInputParameter(19, Integer.valueOf(0));
+        check("timer option toggles OFF", !es.showTimer);
+        es.setOptInputParameter(19, Integer.valueOf(1));
+        check("timer option toggles ON", es.showTimer);
         System.out.println(pass+"/"+(pass+fail)+" PASS");
         if (fail>0) System.exit(1);
     }

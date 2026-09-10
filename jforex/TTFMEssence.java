@@ -81,6 +81,19 @@ package com.dukascopy.indicators;
  *    NY time via the real America/New_York calendar (DST-safe, no fixed
  *    offset); EET/4H chart bucketing untouched.
  *
+ *  COUNTDOWN TIMER (user agreement 2026-09-10, D6 decision - removable):
+ *    [Display] Show Timer (default ON): wall-clock HH:MM:SS countdown above each
+ *    cluster's TF label until the CURRENT layer candle closes. 4H and D each get
+ *    one, anchored on the cluster's TALLEST candle, white on translucent green/red
+ *    of that candle's color. Wall clock (System.currentTimeMillis) per D6: smooth
+ *    in live, consistent with the frozen panel clock, position VERBATIM from Core's
+ *    Show Timer; NOT drawn in replay (wall clock already past candle close) -
+ *    documented caveat, not a bug. Agreed deviation from Core: color follows the
+ *    ANCHORED (tallest) candle - Core's Show Timer uses the cluster's first candle.
+ *    REMOVAL (if it fails the requirement): delete the showTimer field, the
+ *    [Display] Show Timer option (2 lines), the countdown draw block in
+ *    drawOutput, countdownText + its tests. Zero residue = green suites.
+ *
  *  ================= REFERENCE CLONE: CISD DESK (freeze 2026-09-08e) ========
  *  User lock: "clone the CISD concept with its cards, settings, filters,
  *  storage, sharing, Grade and Info - HigherTFCandles.txt is the ONLY
@@ -300,6 +313,12 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     boolean showSessionInPanel = false;
     // Bucketing grid (agreement 2026-09-09): 0=Auto(symbol) 1=EET 2=Brussels 3=NY
     int gridMode = 0;
+    // Countdown timer (agreement 2026-09-10, D6 = wall clock): HH:MM:SS above each
+    // cluster's TF label until the current layer candle closes. Default ON.
+    // REMOVABLE (user condition 2026-09-10): if it fails the requirement, delete the
+    // showTimer field + its option (2 lines) + the countdown draw block in drawOutput
+    // + countdownText + its tests -> zero residue, green suites = proof.
+    boolean showTimer = true;
     private long sharedFileLastModified = 0;
     private final Object sharedFileLock = new Object();
     private final List<String[]> sharedAlertLines = new ArrayList<>();
@@ -494,6 +513,13 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         TimeZone tz=resolveGrid(mode,instrument);
         String base=tz==BUCKET_BRUSSELS?"Brussels":tz==BUCKET_NY?"NY":"EET";
         return base+(mode==0?"-auto":"-manual");
+    }
+    /** [O timer 2026-09-10] wall-clock countdown text HH:MM:SS; empty when nothing
+     *  is left (remain<=0 - e.g. replay, where the wall clock is already past). */
+    static String countdownText(long remainMs){
+        if (remainMs<=0) return "";
+        long h=remainMs/3600000L, m=(remainMs%3600000L)/60000L, s=(remainMs%60000L)/1000L;
+        return String.format(java.util.Locale.US,"%02d:%02d:%02d",h,m,s);
     }
 
     // ================== SMT ENGINE (optional module; agreement 2026-09-10) ==================
@@ -944,6 +970,9 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         // SMT divergence engine (agreement 2026-09-10): panel-only, OFF by default
         opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[SMT] Detection",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,BOOLEAN_VALUES,BOOLEAN_NAMES)));
         set.add(v->showSMT=((Integer)v)==1);
+        // Countdown timer (agreement 2026-09-10, D6 wall clock): default ON; REMOVAL note at draw site
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[Display] Show Timer",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->showTimer=((Integer)v)==1);
         optInfos=opt.toArray(new com.dukascopy.api.indicators.OptInputParameterInfo[0]);
         optSetters=set.toArray(new OptInputSetter[0]);
     }
@@ -1821,7 +1850,25 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
                     g2.setFont(oldFont.deriveFont(Font.BOLD,9f));
                     g2.setColor(new Color(100,100,100));
                     int tw=g2.getFontMetrics().stringWidth(lbl);
+                    int a9=g2.getFontMetrics().getAscent();
                     g2.drawString(lbl,lx-tw/2,ly);
+                    // [Display] Show Timer (agreement 2026-09-10, D6 wall clock):
+                    // countdown until the CURRENT layer candle closes - fully above
+                    // the TF label. REMOVAL (if it fails the requirement): delete
+                    // this block + showTimer field + its option (2 lines) + tests.
+                    if (showTimer){
+                        long remain=layer.curStart+periodMs-System.currentTimeMillis();
+                        String t=countdownText(remain);
+                        if (!t.isEmpty()){
+                            g2.setFont(oldFont.deriveFont(Font.BOLD,10f));
+                            FontMetrics fm=g2.getFontMetrics();int tw2=fm.stringWidth(t);
+                            int ty=ly-a9-8;   // clear vertical gap: countdown sits fully ABOVE the TF label
+                            CandleData tall=disp.get(hi);
+                            g2.setColor(tall.close>=tall.open?new Color(0,200,0,100):new Color(200,0,0,100));
+                            g2.fillRect(lx-tw2/2-3,ty-fm.getAscent()-3,tw2+6,fm.getAscent()+6);
+                            g2.setColor(Color.WHITE);g2.drawString(t,lx-tw2/2,ty);
+                        }
+                    }
                 }
             }
 

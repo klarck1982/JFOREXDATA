@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 1030" font-family="Segoe UI, Tahoma, Arial, sans-serif">
+  <!-- canvas -->
+  <rect x="0" y="0" width="960" height="1030" fill="#131722"/>
+
+  <!-- header -->
+  <text x="480" y="34" text-anchor="middle" font-size="22" font-weight="bold" fill="#ffffff">D6 — من أين يأخذ العدّاد فكرة «الآن»؟</text>
+  <text x="480" y="57" text-anchor="middle" font-size="13" fill="#8b93a7">شمعة 4H تنتهي 12:00 (EET) · العدّاد = الوقت المتبقي للإغلاق · شارت التنفيذ 15m</text>
+
+  <!-- ================= PANEL 1: chart mockup ================= -->
+  <rect x="40" y="76" width="880" height="214" rx="8" fill="#1e222d" stroke="#363a45"/>
+  <text x="60" y="100" font-size="13" font-weight="bold" fill="#d1d4dc">1) الشكل على الشارت (مشترك في الخيارين)</text>
+
+  <!-- chart area -->
+  <line x1="120" y1="112" x2="120" y2="252" stroke="#758696" stroke-dasharray="4 4" stroke-width="1"/>
+  <line x1="720" y1="112" x2="720" y2="252" stroke="#758696" stroke-dasharray="4 4" stroke-width="1"/>
+
+  <!-- 15m candles -->
+  <g stroke-width="2">
+    <line x1="150" y1="200" x2="150" y2="222" stroke="#00b400"/><rect x="135" y="203" width="30" height="12" fill="#00b400"/>
+    <line x1="205" y1="195" x2="205" y2="209" stroke="#00b400"/><rect x="190" y="198" width="30" height="5" fill="#00b400"/>
+    <line x1="260" y1="200" x2="260" y2="219" stroke="#c23734"/><rect x="245" y="198" width="30" height="17" fill="#c23734"/>
+    <line x1="315" y1="207" x2="315" y2="226" stroke="#c23734"/><rect x="300" y="215" width="30" height="6" fill="#c23734"/>
+    <line x1="370" y1="212" x2="370" y2="224" stroke="#00b400"/><rect x="355" y="214" width="30" height="7" fill="#00b400"/>
+    <line x1="425" y1="192" x2="425" y2="216" stroke="#00b400"/><rect x="410" y="196" width="30" height="18" fill="#00b400"/>
+    <line x1="480" y1="187" x2="480" y2="200" stroke="#00b400"/><rect x="465" y="190" width="30" height="6" fill="#00b400"/>
+    <line x1="535" y1="182" x2="535" y2="194" stroke="#00b400"/><rect x="520" y="185" width="30" height="5" fill="#00b400"/>
+    <line x1="590" y1="193" x2="590" y2="186" stroke="#c23734"/><rect x="575" y="186" width="30" height="5" fill="#c23734"/>
+    <line x1="645" y1="178" x2="645" y2="192" stroke="#00b400"/><rect x="630" y="180" width="30" height="11" fill="#00b400" opacity="0.7"/>
+  </g>
+
+  <!-- now marker -->
+  <line x1="513" y1="112" x2="513" y2="252" stroke="#f0b90b" stroke-dasharray="3 3" stroke-width="1.5"/>
+  <text x="513" y="108" text-anchor="middle" font-size="11" font-weight="bold" fill="#f0b90b">الآن = 10:37:22</text>
+
+  <!-- 4H cluster -->
+  <g stroke-width="2">
+    <line x1="765" y1="178" x2="765" y2="212" stroke="#00b400"/><rect x="753" y="190" width="24" height="15" fill="#00b400"/>
+    <line x1="800" y1="165" x2="800" y2="228" stroke="#444444"/><rect x="788" y="192" width="24" height="28" fill="#1e222d" stroke="#555"/>
+    <line x1="835" y1="208" x2="835" y2="226" stroke="#00b400"/><rect x="823" y="198" width="24" height="22" fill="#00b400"/>
+  </g>
+  <text x="800" y="157" text-anchor="middle" font-size="11" font-weight="bold" fill="#8b93a7">4H</text>
+  <!-- countdown box -->
+  <rect x="755" y="118" width="90" height="24" rx="4" fill="#00c800" fill-opacity="0.35" stroke="#00c800"/>
+  <text x="800" y="135" text-anchor="middle" font-size="15" font-weight="bold" fill="#ffffff" font-family="Consolas, monospace">01:22:38</text>
+  <line x1="755" y1="130" x2="705" y2="122" stroke="#f0b90b" stroke-width="1"/>
+  <text x="700" y="125" text-anchor="end" font-size="11.5" fill="#f0b90b">العدّاد: أبيض فوق أخضر/أحمر، فوق تسمية TF، أعلى شمعة بالعنقود</text>
+
+  <!-- time axis -->
+  <g font-size="11" fill="#8b93a7" text-anchor="middle">
+    <text x="120" y="268">08:00</text><text x="270" y="268">09:00</text><text x="420" y="268">10:00</text>
+    <text x="570" y="268">11:00</text><text x="720" y="268">12:00</text>
+  </g>
+  <text x="480" y="285" text-anchor="middle" font-size="11.5" fill="#d1d4dc">شمعة 4H (08:00–12:00 EET) تتكوّن — العدّاد = الزمن حتى 12:00 · الشكل نفسه في الخيارين</text>
+
+  <!-- ================= PANEL 2: two graphs ================= -->
+  <rect x="40" y="310" width="425" height="330" rx="8" fill="#1e222d" stroke="#363a45"/>
+  <rect x="495" y="310" width="425" height="330" rx="8" fill="#1e222d" stroke="#363a45"/>
+
+  <!-- LEFT graph: wall clock (smooth) -->
+  <g>
+    <text x="60" y="338" font-size="15" font-weight="bold" fill="#7cfc9a">الخيار أ: ساعة الحائط — لايف</text>
+    <text x="60" y="356" font-size="11" fill="#8b93a7">تكبير 10:00–11:00 لرؤية الفرق</text>
+    <!-- axes -->
+    <line x1="110" y1="380" x2="110" y2="590" stroke="#363a45"/>
+    <line x1="110" y1="590" x2="410" y2="590" stroke="#363a45"/>
+    <g font-size="10" fill="#8b93a7" text-anchor="end">
+      <text x="100" y="384">2:00</text><text x="100" y="436.5">1:45</text><text x="100" y="489">1:30</text>
+      <text x="100" y="541.5">1:15</text><text x="100" y="594">1:00</text>
+    </g>
+    <g font-size="10" fill="#8b93a7" text-anchor="middle">
+      <text x="110" y="608">10:00</text><text x="185" y="608">10:15</text><text x="260" y="608">10:30</text>
+      <text x="335" y="608">10:45</text><text x="410" y="608">11:00</text>
+    </g>
+    <!-- smooth line -->
+    <line x1="110" y1="380" x2="410" y2="590" stroke="#00c800" stroke-width="2.5"/>
+    <!-- seconds dots -->
+    <circle cx="285" cy="502.5" r="3" fill="#00c800"/>
+    <circle cx="310" cy="523.3" r="3" fill="#00c800"/>
+    <!-- now marker -->
+    <line x1="296.8" y1="380" x2="296.8" y2="590" stroke="#f0b90b" stroke-dasharray="3 3" stroke-width="1.5"/>
+    <circle cx="296.8" cy="510.8" r="5" fill="#f0b90b"/>
+    <line x1="296.8" y1="514" x2="330" y2="548" stroke="#f0b90b" stroke-width="1"/>
+    <rect x="330" y="540" width="112" height="26" rx="4" fill="#00c800" fill-opacity="0.35" stroke="#00c800"/>
+    <text x="386" y="558" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff" font-family="Consolas, monospace">01:22:38</text>
+    <text x="240" y="585" font-size="10.5" fill="#8b93a7">النقاط = ثوانٍ تمرّ (مبالَغ فيها هنا)</text>
+    <text x="60" y="630" font-size="12" fill="#d1d4dc">الرقم ينقص كل ثانية مع كل repaint — عدّاد حقيقي سلس</text>
+  </g>
+
+  <!-- RIGHT graph: chart time (steps) -->
+  <g transform="translate(455,0)">
+    <text x="60" y="338" font-size="15" font-weight="bold" fill="#f0b90b">الخيار ب: زمن الشارت — لايف</text>
+    <text x="60" y="356" font-size="11" fill="#8b93a7">تكبير 10:00–11:00 لرؤية الفرق</text>
+    <!-- axes -->
+    <line x1="110" y1="380" x2="110" y2="590" stroke="#363a45"/>
+    <line x1="110" y1="590" x2="410" y2="590" stroke="#363a45"/>
+    <g font-size="10" fill="#8b93a7" text-anchor="end">
+      <text x="100" y="384">2:00</text><text x="100" y="436.5">1:45</text><text x="100" y="489">1:30</text>
+      <text x="100" y="541.5">1:15</text><text x="100" y="594">1:00</text>
+    </g>
+    <g font-size="10" fill="#8b93a7" text-anchor="middle">
+      <text x="110" y="608">10:00</text><text x="185" y="608">10:15</text><text x="260" y="608">10:30</text>
+      <text x="335" y="608">10:45</text><text x="410" y="608">11:00</text>
+    </g>
+    <!-- staircase -->
+    <path d="M 110 380 H 185 V 432.5 H 260 V 485 H 335 V 537.5 H 410 V 590" fill="none" stroke="#f0b90b" stroke-width="2.5"/>
+    <!-- now marker on step -->
+    <line x1="296.8" y1="380" x2="296.8" y2="590" stroke="#758696" stroke-dasharray="3 3" stroke-width="1.2"/>
+    <circle cx="296.8" cy="485" r="5" fill="#f0b90b"/>
+    <line x1="296.8" y1="481" x2="330" y2="456" stroke="#f0b90b" stroke-width="1"/>
+    <rect x="330" y="430" width="112" height="26" rx="4" fill="#8b93a7" fill-opacity="0.3" stroke="#8b93a7"/>
+    <text x="386" y="448" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff" font-family="Consolas, monospace">01:30:00</text>
+    <text x="150" y="472" font-size="10.5" fill="#8b93a7">قيمة ثابتة طوال البار 10:30–10:45</text>
+    <text x="60" y="630" font-size="12" fill="#d1d4dc">يقفز عند كل بار 15m جديد فقط — الرقم «متجمّد» داخل البار</text>
+  </g>
+
+  <!-- ================= PANEL 3: replay ================= -->
+  <rect x="40" y="660" width="880" height="190" rx="8" fill="#1e222d" stroke="#363a45"/>
+  <text x="60" y="688" font-size="13" font-weight="bold" fill="#d1d4dc">2) ماذا يحدث في الـ Replay (باك-تست سبتمبر 2024)؟</text>
+  <text x="60" y="712" font-size="12" fill="#8b93a7">التشغيل عند 2024-09-15 14:00 · شمعة 4H تتكوّن (12:00–16:00) · الوقت الفعلي للحاسوب = 2026-09-10</text>
+
+  <rect x="70" y="730" width="390" height="86" rx="6" fill="#171b26" stroke="#758696" stroke-dasharray="5 4"/>
+  <text x="90" y="754" font-size="13" font-weight="bold" fill="#ffffff">أ: ساعة الحائط</text>
+  <text x="90" y="776" font-size="11.5" fill="#d1d4dc">إغلاق الشمعة = 2024-09-15 16:00 · الآن الفعلي = 2026 → المتبقي &lt; 0</text>
+  <text x="90" y="798" font-size="12" font-weight="bold" fill="#f0b90b">✗ العدّاد لا يُرسم (يختفي بهدوء) — لا أرقام زائفة</text>
+
+  <rect x="500" y="730" width="390" height="86" rx="6" fill="#171b26" stroke="#26a69a"/>
+  <text x="520" y="754" font-size="13" font-weight="bold" fill="#ffffff">ب: زمن الشارت</text>
+  <text x="520" y="776" font-size="11.5" fill="#d1d4dc">16:00 − آخر بار (14:00) = 02:00:00</text>
+  <text x="520" y="798" font-size="12" font-weight="bold" fill="#7cfc9a">✓ دقيق في لحظة التشغيل — لكنه يقفز كل 15 دقيقة فقط</text>
+
+  <text x="60" y="840" font-size="12" fill="#8b93a7">ملاحظة: في الباك-تست لا قيمة لعدّاد متحرك أصلاً — أداة التوقيت الثابتة هناك هي خط NY 8:00 (session overlay)</text>
+
+  <!-- ================= PANEL 4: conclusion ================= -->
+  <rect x="40" y="868" width="880" height="140" rx="8" fill="#16241c" stroke="#00b400"/>
+  <text x="60" y="900" font-size="17" font-weight="bold" fill="#7cfc9a">التوصية: الخيار أ — ساعة الحائط</text>
+  <text x="60" y="928" font-size="12.5" fill="#d1d4dc">• لايف: تنقّل سلس كل ثانية — هذا بالضبط ما طلبته («أخبرني وقت انتهاء الشمعة»)</text>
+  <text x="60" y="950" font-size="12.5" fill="#d1d4dc">• اتساق مع ساعة اللوحة المقفلة (wall clock) + VERBATIM من Core (تصميم مختبَر، نفس الشكل)</text>
+  <text x="60" y="972" font-size="12.5" fill="#d1d4dc">• Replay: يختفي العدّاد — يُوثَّق في الترويسة كقيد (caveat) لا خلل؛ زمن الشارت لا يستحق إلا إن أردت عدّاداً خشناً في الباك-تست</text>
+  <text x="60" y="996" font-size="11.5" fill="#8b93a7">بانتظار «اعتمد» — لم يُعدَّل أي كود</text>
+</svg>
