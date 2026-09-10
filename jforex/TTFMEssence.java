@@ -47,7 +47,13 @@ package com.dukascopy.indicators;
  *      Day start = EET): US100/US500/US30 + EURUSD/GBPUSD = EET (Athens);
  *      XAUUSD/XAUEUR (XAU/GOLD names) = Brussels. [Bucketing] Grid option
  *      {Auto/EET/Brussels/NY}, default Auto; panel always shows "Grid: X".
- *    SMT = NOT in this build (deferred by user until experiment succeeds)
+ *    SMT ENGINE (agreement 2026-09-10): intermarket divergence, panel-only.
+ *      Confirmed fractal pivots (K=2) on CLOSED anchor buckets shared via
+ *      SharedSMT.csv; verdicts vs peers (trio NQ/ES/YM, EU/GU, XAU pair =
+ *      experimental "?"). [SMT] Detection default OFF = zero IO/state/drawing.
+ *      Mixed-anchor peers ignored; v1 mechanical (no size filter - SMT is
+ *      confirmation, model context is the filter). Removable as one block
+ *      (see REMOVAL note at the SMT ENGINE block).
  *
  *  THE NINE APPROVED ELEMENTS (user lock "approve the list", 2026-09-08;
  *  item 7 removed 2026-09-08b: the orange liquidity tags in the screenshot
@@ -490,6 +496,208 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         return base+(mode==0?"-auto":"-manual");
     }
 
+    // ================== SMT ENGINE (optional module; agreement 2026-09-10) ==================
+    // Intermarket SMT divergence via SharedSMT.csv (confirmed anchor-TF fractal pivots).
+    // Output: panel line only ("SMT: ES\u2193!" / "SMT: \u2014"). showSMT=false (default) =
+    // zero file IO, zero state, zero drawing (functionally absent).
+    // Pivots: fractal K=2 on CLOSED anchor buckets, strict-left/inclusive-right (same
+    // convention as findLastTwoSwings), confirmed-only -> never repaints.
+    // Pairing: base swings within +/-2 anchor bars (ms); taker extension fresh (<=3 bars).
+    // Peer anchorMs MUST equal own (mixed-TF peers ignored). Gold pair = experimental ("?").
+    // REMOVAL (if SMT fails): delete this whole block + "[SMT] Detection" option in
+    //   buildOptions (2 lines) + "if (showSMT) updateSmt();" in calculate (1 line) +
+    //   "if (showSMT){...}" SMT line in drawInfoPanel (1 line) + SMT test block in
+    //   TTFMEssenceTest. Recompile + green suites = proof of zero residue.
+    static final int SMT_PIVOT_K = 2;
+    static final int SMT_WINDOW_BARS = 2;
+    static final int SMT_FRESH_BARS = 3;
+    static final int SMT_RING = 30;
+    boolean showSMT = false;                       // [SMT] Detection (default OFF)
+    String smtPanelLine = "\u2014";
+    private final Object smtFileLock = new Object();
+    static final class SmtPivot {
+        long t; double p; boolean high;
+        SmtPivot(long t,double p,boolean high){this.t=t;this.p=p;this.high=high;}
+    }
+    /** [SMT] instrument -> key: NQ/ES/YM/EU/GU/XAUUSD/XAUEUR, else "". XAU first (XAUEUR contains EUR). */
+    static String smtKey(String instrument){
+        if (instrument==null) return "";
+        String u=instrument.toUpperCase(java.util.Locale.US);
+        if (u.contains("XAU")||u.contains("GOLD")) return u.contains("EUR")?"XAUEUR":"XAUUSD";
+        if (u.contains("TECH")||u.contains("USTEC")||u.contains("US100")||u.contains("NAS")) return "NQ";
+        if (u.contains("500")||u.contains("SPX")) return "ES";
+        if (u.contains("US30")||u.contains("USA30")||u.contains("DOW")) return "YM";
+        if (u.contains("EUR")&&u.contains("USD")) return "EU";
+        if (u.contains("GBP")&&u.contains("USD")) return "GU";
+        return "";
+    }
+    /** [SMT] peers per key (evaluation order). */
+    static String[] smtPeers(String key){
+        if ("NQ".equals(key)) return new String[]{"ES","YM"};
+        if ("ES".equals(key)) return new String[]{"NQ","YM"};
+        if ("YM".equals(key)) return new String[]{"NQ","ES"};
+        if ("EU".equals(key)) return new String[]{"GU"};
+        if ("GU".equals(key)) return new String[]{"EU"};
+        if ("XAUUSD".equals(key)) return new String[]{"XAUEUR"};
+        if ("XAUEUR".equals(key)) return new String[]{"XAUUSD"};
+        return new String[0];
+    }
+    /** [SMT] gold pair is experimental -> "?" suffix on tokens. */
+    static boolean smtExperimental(String key){ return key!=null&&key.startsWith("XAU"); }
+    /** [SMT] fractal pivots on parallel arrays (oldest->newest). Indices [K,n-1-K] only
+     *  (confirmed, never repaints). Plateau -> leftmost pivot (strict-left/inclusive-right). */
+    static List<SmtPivot> smtPivots(long[] times,double[] hi,double[] lo){
+        List<SmtPivot> out=new ArrayList<>();
+        if (times==null||hi==null||lo==null) return out;
+        int n=Math.min(times.length,Math.min(hi.length,lo.length));
+        int k=SMT_PIVOT_K;
+        if (n<2*k+1) return out;
+        for (int i=k;i<=n-1-k;i++){
+            boolean h=true,l=true;
+            for (int j=i-k;j<=i+k;j++){
+                if (j==i) continue;
+                if (j<i){ if (hi[j]>=hi[i]) h=false; if (lo[j]<=lo[i]) l=false; }
+                else    { if (hi[j]>hi[i])  h=false; if (lo[j]<lo[i])  l=false; }
+            }
+            if (h) out.add(new SmtPivot(times[i],hi[i],true));
+            if (l) out.add(new SmtPivot(times[i],lo[i],false));
+        }
+        return out;
+    }
+    /** [SMT] last two pivots of a side, {prior,latest}, or null. */
+    static SmtPivot[] smtLastTwo(List<SmtPivot> pivots,boolean sideHigh){
+        SmtPivot a=null,b=null;
+        if (pivots!=null) for (SmtPivot p:pivots){
+            if (p.high!=sideHigh) continue;
+            a=b; b=p;
+        }
+        if (a==null||b==null) return null;
+        return new SmtPivot[]{a,b};
+    }
+    /** [SMT] divergence verdict for one side: +1 bullish (lows), -1 bearish (highs), 0 none.
+     *  Base swings must align (|dt|<=2 anchor bars); exactly one side takes out; taker's
+     *  extension fresh (<=3 anchor bars old). Both/neither take = agreement = 0. */
+    static int smtVerdictSide(List<SmtPivot> own,List<SmtPivot> peer,boolean sideHigh,long anchorMs,long nowMs){
+        if (anchorMs<=0) return 0;
+        SmtPivot[] o=smtLastTwo(own,sideHigh),p=smtLastTwo(peer,sideHigh);
+        if (o==null||p==null) return 0;
+        if (Math.abs(o[0].t-p[0].t)>SMT_WINDOW_BARS*anchorMs) return 0;
+        boolean ownTook=sideHigh?o[1].p>o[0].p:o[1].p<o[0].p;
+        boolean peerTook=sideHigh?p[1].p>p[0].p:p[1].p<p[0].p;
+        if (ownTook==peerTook) return 0;
+        long takerT=ownTook?o[1].t:p[1].t;
+        if (nowMs-takerT>SMT_FRESH_BARS*anchorMs) return 0;
+        return sideHigh?-1:1;
+    }
+    /** [SMT] CSV line: key,side(H/L),openTime,price,anchorMs. */
+    static String smtFormatLine(String key,boolean high,long t,double price,long anchorMs){
+        return key+","+(high?"H":"L")+","+t+","+price+","+anchorMs;
+    }
+    /** [SMT] parse peer pivots (time-ascending), same-anchorMs only; corrupt lines ignored. */
+    static List<SmtPivot> smtParsePeer(List<String[]> lines,String peerKey,long anchorMs){
+        List<SmtPivot> out=new ArrayList<>();
+        if (lines==null||peerKey==null||peerKey.isEmpty()) return out;
+        for (String[] l:lines){
+            if (l==null||l.length<5||!peerKey.equals(l[0])) continue;
+            try {
+                boolean h="H".equals(l[1]);
+                if (!h&&!"L".equals(l[1])) continue;
+                long t=Long.parseLong(l[2]); double p=Double.parseDouble(l[3]); long a=Long.parseLong(l[4]);
+                if (a!=anchorMs) continue;
+                out.add(new SmtPivot(t,p,h));
+            } catch (Exception e){ }
+        }
+        for (int i=1;i<out.size();i++){
+            SmtPivot v=out.get(i); int j=i-1;
+            while (j>=0&&out.get(j).t>v.t){ out.set(j+1,out.get(j)); j--; }
+            out.set(j+1,v);
+        }
+        return out;
+    }
+    static long smtLineTime(String[] l){
+        if (l==null||l.length<5) return 0;
+        try { return Long.parseLong(l[2]); } catch (Exception e){ return 0; }
+    }
+    private File getSmtPath(){ return new File(filesDir(),"SharedSMT.csv"); }
+    private List<String[]> readSmtLinesInternal(){
+        List<String[]> lines=new ArrayList<>();
+        File f=getSmtPath();
+        if (!f.exists()) return lines;
+        try (BufferedReader br=new BufferedReader(new FileReader(f))){
+            String line;
+            while ((line=br.readLine())!=null){
+                String[] parts=line.split(",");
+                if (parts.length>=5) lines.add(new String[]{parts[0],parts[1],parts[2],parts[3],parts[4]});
+            }
+        } catch (IOException e){ }
+        return lines;
+    }
+    /** [SMT] share newly-confirmed own pivots (file rewritten only when something new). */
+    private void smtShare(String key,List<SmtPivot> own,long anchorMs){
+        synchronized (smtFileLock){
+            List<String[]> lines=readSmtLinesInternal();
+            boolean added=false;
+            for (SmtPivot p:own){
+                boolean seen=false;
+                for (String[] l:lines){
+                    if (l.length>=5&&key.equals(l[0])
+                        &&((p.high&&"H".equals(l[1]))||(!p.high&&"L".equals(l[1])))
+                        &&smtLineTime(l)==p.t){ seen=true; break; }
+                }
+                if (!seen){
+                    lines.add(new String[]{key,p.high?"H":"L",String.valueOf(p.t),
+                        String.valueOf(p.p),String.valueOf(anchorMs)});
+                    added=true;
+                }
+            }
+            if (!added) return;
+            Map<String,List<String[]>> g=new java.util.HashMap<String,List<String[]>>();
+            for (String[] l:lines){
+                String k=l[0]+"|"+l[1];
+                if (!g.containsKey(k)) g.put(k,new ArrayList<String[]>());
+                g.get(k).add(l);
+            }
+            lines.clear();
+            for (List<String[]> grp:g.values()){
+                for (int i=1;i<grp.size();i++){
+                    String[] v=grp.get(i); long vt=smtLineTime(v); int j=i-1;
+                    while (j>=0&&smtLineTime(grp.get(j))<vt){ grp.set(j+1,grp.get(j)); j--; }
+                    grp.set(j+1,v);
+                }
+                for (int i=0;i<grp.size()&&i<SMT_RING;i++) lines.add(grp.get(i));
+            }
+            try (PrintWriter pw=new PrintWriter(new FileWriter(getSmtPath()))){
+                for (String[] l:lines) pw.println(l[0]+","+l[1]+","+l[2]+","+l[3]+","+l[4]);
+            } catch (Exception e){ }
+        }
+    }
+    /** [SMT] recompute own pivots, share them, evaluate peers -> smtPanelLine. Called only when showSMT. */
+    private void updateSmt(){
+        smtPanelLine="\u2014";
+        String key=smtKey(currentInstrumentName());
+        String[] peers=smtPeers(key);
+        if (key.isEmpty()||peers.length==0||drawAnchor==null) return;
+        long anchorMs=PERIOD_INTERVALS[drawAnchor.periodIndex];
+        if (anchorMs<=0) return;
+        List<CandleData> hist=drawAnchor.historical;
+        int n=hist.size();
+        if (n<2*SMT_PIVOT_K+1) return;
+        long[] tt=new long[n]; double[] hh=new double[n]; double[] ll=new double[n];
+        for (int i=0;i<n;i++){ CandleData c=hist.get(i); tt[i]=c.openTime; hh[i]=c.high; ll[i]=c.low; }
+        List<SmtPivot> own=smtPivots(tt,hh,ll);
+        smtShare(key,own,anchorMs);
+        List<String[]> lines=readSmtLinesInternal();
+        StringBuilder sb=new StringBuilder();
+        for (String peer:peers){
+            List<SmtPivot> pp=smtParsePeer(lines,peer,anchorMs);
+            String exp=smtExperimental(peer)?"?":"";
+            if (smtVerdictSide(own,pp,true,anchorMs,chartNowTime)!=0) sb.append(peer+"\u2193!"+exp+" ");
+            if (smtVerdictSide(own,pp,false,anchorMs,chartNowTime)!=0) sb.append(peer+"\u2191!"+exp+" ");
+        }
+        if (sb.length()>0) smtPanelLine=sb.toString().trim();
+    }
+    // ================== end SMT ENGINE ==================
+
     /** [O session overlay] open time of the chart bar containing t (last bar
      *  time <= t), or -1. Guarantees an EXACT bar time for getXForTime. */
     static long snapToBar(long[] times,long t){
@@ -733,6 +941,9 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         // Per-symbol TV grid (agreement 2026-09-09): Auto resolves by instrument
         opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[Bucketing] Grid",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,GRID_VALUES,GRID_NAMES)));
         set.add(v->gridMode=(Integer)v);
+        // SMT divergence engine (agreement 2026-09-10): panel-only, OFF by default
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[SMT] Detection",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(0,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->showSMT=((Integer)v)==1);
         optInfos=opt.toArray(new com.dukascopy.api.indicators.OptInputParameterInfo[0]);
         optSetters=set.toArray(new OptInputSetter[0]);
     }
@@ -803,6 +1014,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         LayerData primary=layers[ANCHOR_LAYER-1];
         drawAnchor=primary;
         updateNdmBias(layers[BIAS_LAYER-1]);
+        if (showSMT) updateSmt();   // [SMT] panel-only engine (OFF = zero residue)
 
         int detectionIndex=endIndex;
         if (detectionIndex==bars.length-1){
@@ -1936,6 +2148,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         ls.add(tf+"-"+htf+" Model"); big.add(Boolean.FALSE);
         ls.add("Grid: "+gridTag(gridMode,currentInstrumentName())); big.add(Boolean.FALSE);
         ls.add(timeS); big.add(Boolean.TRUE);
+        if (showSMT){ ls.add("SMT: "+smtPanelLine); big.add(Boolean.FALSE); }
         String biasS=(currentBias!=0)?(currentBias>0?"Bullish":"Bearish"):"Neutral";
         ls.add("Bias: "+biasS); big.add(Boolean.FALSE);
         if (showSessionInPanel&&chartNowTime>0){

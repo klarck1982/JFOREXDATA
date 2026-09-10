@@ -36,6 +36,12 @@ public class TTFMEssenceTest {
         Calendar c=Calendar.getInstance(tz); c.setTimeInMillis(t);
         return c.get(Calendar.HOUR_OF_DAY);
     }
+    static List<TTFMEssence.SmtPivot> peerPivots(boolean high,long t1,double p1,long t2,double p2){
+        List<TTFMEssence.SmtPivot> l=new ArrayList<>();
+        l.add(new TTFMEssence.SmtPivot(t1,p1,high));
+        l.add(new TTFMEssence.SmtPivot(t2,p2,high));
+        return l;
+    }
 
     public static void main(String[] args){
         TimeZone g3=TimeZone.getTimeZone("GMT+3:00");
@@ -302,11 +308,13 @@ public class TTFMEssenceTest {
         check("option Low stored raw 0 -> min 3", es.cisdSensitivity==0&&TTFMEssence.minWaveFor(es.cisdSensitivity)==3);
         es.setOptInputParameter(1, Integer.valueOf(2));
         check("option High stored raw 2 -> min 1", es.cisdSensitivity==2&&TTFMEssence.minWaveFor(es.cisdSensitivity)==1);
-        check("option group exposed (18 opts, idx0 Detection, idx1 MinWave)",
+        check("option group exposed (19 opts, idx0 Detection, idx1 MinWave)",
             es.getOptInputParameterInfo(0)!=null && es.getOptInputParameterInfo(1)!=null
-            && es.getOptInputParameterInfo(17)!=null && es.getOptInputParameterInfo(18)==null
+            && es.getOptInputParameterInfo(17)!=null && es.getOptInputParameterInfo(18)!=null
+            && es.getOptInputParameterInfo(19)==null
             && es.getOptInputParameterInfo(0).getName().equals("[CISD] Detection")
-            && es.getOptInputParameterInfo(1).getName().equals("[CISD] Min Wave Length"));
+            && es.getOptInputParameterInfo(1).getName().equals("[CISD] Min Wave Length")
+            && es.getOptInputParameterInfo(18).getName().equals("[SMT] Detection"));
 
         // ---- Desk: Grade presets (reference applyCisdGrade) ----
         TTFMEssence g1=new TTFMEssence();
@@ -447,6 +455,84 @@ public class TTFMEssenceTest {
         // ---- regression 2026-09-08: 1H slot was 60h (60*60*60*1000) since v1 ----
         check("PERIOD table exact", java.util.Arrays.equals(TTFMEssence.PERIOD_INTERVALS,
             new long[]{900000L,1800000L,3600000L,14400000L,86400000L,25200000L,604800000L,2592000000L}));
+
+        // ---- SMT ENGINE (agreement 2026-09-10): keys/peers, pivots, verdict, parse ----
+        // keys: XAU first (XAUEUR contains EUR), trio, majors, unknown
+        check("smtKey NQ", TTFMEssence.smtKey("USATECH.IDX/USD").equals("NQ"));
+        check("smtKey ES", TTFMEssence.smtKey("USA500.IDX/USD").equals("ES"));
+        check("smtKey YM", TTFMEssence.smtKey("USA30.IDX/USD").equals("YM"));
+        check("smtKey EU", TTFMEssence.smtKey("EUR/USD").equals("EU"));
+        check("smtKey GU", TTFMEssence.smtKey("GBP/USD").equals("GU"));
+        check("smtKey XAU/USD -> XAUUSD", TTFMEssence.smtKey("XAU/USD").equals("XAUUSD"));
+        check("smtKey XAU/EUR -> XAUEUR (XAU before EUR check)", TTFMEssence.smtKey("XAU/EUR").equals("XAUEUR"));
+        check("smtKey EUR/GBP -> unknown", TTFMEssence.smtKey("EUR/GBP").equals(""));
+        check("smtKey oil -> unknown", TTFMEssence.smtKey("OIL.WTI").equals(""));
+        check("smtKey null -> empty", TTFMEssence.smtKey(null).equals(""));
+        // peers: trio all three, EU/GU pair, gold pair, unknown -> none
+        check("smtPeers NQ trio", java.util.Arrays.equals(TTFMEssence.smtPeers("NQ"), new String[]{"ES","YM"}));
+        check("smtPeers ES trio", java.util.Arrays.equals(TTFMEssence.smtPeers("ES"), new String[]{"NQ","YM"}));
+        check("smtPeers YM trio", java.util.Arrays.equals(TTFMEssence.smtPeers("YM"), new String[]{"NQ","ES"}));
+        check("smtPeers EU<->GU", java.util.Arrays.equals(TTFMEssence.smtPeers("EU"), new String[]{"GU"})
+            && java.util.Arrays.equals(TTFMEssence.smtPeers("GU"), new String[]{"EU"}));
+        check("smtPeers gold pair", java.util.Arrays.equals(TTFMEssence.smtPeers("XAUUSD"), new String[]{"XAUEUR"})
+            && java.util.Arrays.equals(TTFMEssence.smtPeers("XAUEUR"), new String[]{"XAUUSD"}));
+        check("smtPeers unknown empty", TTFMEssence.smtPeers("").length==0);
+        // experimental: gold pair only
+        check("smtExperimental XAU only", TTFMEssence.smtExperimental("XAUUSD")&&TTFMEssence.smtExperimental("XAUEUR")
+            &&!TTFMEssence.smtExperimental("ES")&&!TTFMEssence.smtExperimental("EU")&&!TTFMEssence.smtExperimental(null));
+        // pivots: K=2 fractal on confirmed buckets; series has H@3, L@6, H@8, L@10
+        long[] st=new long[13]; double[] sh=new double[13], sl=new double[13];
+        double[] hArr={10,15,25,30,20,12,10,18,22,14,6,10,16};
+        double[] lArr={5,8,12,15,8,6,4,8,10,6,2,5,8};
+        for (int i=0;i<13;i++){ st[i]=i*1000L; sh[i]=hArr[i]; sl[i]=lArr[i]; }
+        List<TTFMEssence.SmtPivot> pv=TTFMEssence.smtPivots(st,sh,sl);
+        check("pivots count = 4 (confirmed only)", pv.size()==4);
+        check("pivots order H3,L6,H8,L10",
+            pv.get(0).high&&pv.get(0).t==3000L&&pv.get(0).p==30.0
+            &&!pv.get(1).high&&pv.get(1).t==6000L&&pv.get(1).p==4.0
+            &&pv.get(2).high&&pv.get(2).t==8000L&&pv.get(2).p==22.0
+            &&!pv.get(3).high&&pv.get(3).t==10000L&&pv.get(3).p==2.0);
+        check("pivots never use unconfirmed edges", pv.get(0).t>=2000L&&pv.get(3).t<=10000L);
+        check("pivots short series -> none", TTFMEssence.smtPivots(new long[]{0,1,2},new double[]{2,3,4},new double[]{1,2,3}).isEmpty());
+        // last-two per side
+        TTFMEssence.SmtPivot[] ph=TTFMEssence.smtLastTwo(pv,true), pl=TTFMEssence.smtLastTwo(pv,false);
+        check("lastTwo highs {3,8}", ph!=null&&ph[0].t==3000L&&ph[1].t==8000L);
+        check("lastTwo lows {6,10}", pl!=null&&pl[0].t==6000L&&pl[1].t==10000L);
+        check("lastTwo single side -> null", TTFMEssence.smtLastTwo(pv,true)!=null
+            &&TTFMEssence.smtLastTwo(java.util.Collections.<TTFMEssence.SmtPivot>emptyList(),true)==null);
+        // verdict: highs divergence (peer made higher high, own did not) -> -1
+        check("verdict highs divergence bear", TTFMEssence.smtVerdictSide(
+            pv, peerPivots(true,3000,30,8000,35), true, 1000L, 10000L)==-1);
+        check("verdict lows divergence bull", TTFMEssence.smtVerdictSide(
+            pv, peerPivots(false,6000,4,10000,5), false, 1000L, 10000L)==1);
+        check("verdict both took = agreement 0", TTFMEssence.smtVerdictSide(
+            pv, peerPivots(false,6000,4,10000,1), false, 1000L, 10000L)==0);
+        check("verdict base misaligned >2 bars -> 0", TTFMEssence.smtVerdictSide(
+            pv, peerPivots(true,6000,30,11000,35), true, 1000L, 10000L)==0);
+        check("verdict taker stale >3 bars -> 0", TTFMEssence.smtVerdictSide(
+            pv, peerPivots(true,3000,30,8000,35), true, 1000L, 10000L+4*1000L)==0);
+        check("verdict missing peer pivots -> 0", TTFMEssence.smtVerdictSide(pv, null, true, 1000L, 10000L)==0);
+        // parse: same-anchor only, corrupt lines ignored, time-ascending
+        List<String[]> lines=new ArrayList<>();
+        lines.add(new String[]{"ES","H","8","35.0","1000"});
+        lines.add(new String[]{"ES","H","3","30.0","1000"});
+        lines.add(new String[]{"ES","L","6","4.0","1000"});
+        lines.add(new String[]{"ES","H","9","99.0","2000"});   // different anchor -> dropped
+        lines.add(new String[]{"ES","X","1","1.0","1000"});    // bad side -> dropped
+        lines.add(new String[]{"NQ","H","1","9.0","1000"});    // other key -> dropped
+        lines.add(new String[]{"ES","H","2","abc","1000"});    // bad price -> dropped
+        List<TTFMEssence.SmtPivot> pp=TTFMEssence.smtParsePeer(lines,"ES",1000L);
+        check("parse keeps 3 valid same-anchor pivots", pp.size()==3
+            &&pp.get(0).high&&pp.get(0).t==3&&!pp.get(1).high&&pp.get(1).t==6&&pp.get(2).high&&pp.get(2).t==8);
+        check("parse time-ascending", TTFMEssence.smtParsePeer(lines,"ES",1000L).get(0).t==3);
+        check("parse anchor mismatch -> empty", TTFMEssence.smtParsePeer(lines,"ES",9999L).isEmpty());
+        check("parse format roundtrip", TTFMEssence.smtFormatLine("NQ",true,3000L,30.0,1000L).equals("NQ,H,3000,30.0,1000"));
+        // option: default OFF, exposed at idx18, togglable
+        check("smt option default OFF", !es.showSMT);
+        es.setOptInputParameter(18, Integer.valueOf(1));
+        check("smt option toggles ON", es.showSMT);
+        es.setOptInputParameter(18, Integer.valueOf(0));
+        check("smt option toggles OFF", !es.showSMT);
         System.out.println(pass+"/"+(pass+fail)+" PASS");
         if (fail>0) System.exit(1);
     }
