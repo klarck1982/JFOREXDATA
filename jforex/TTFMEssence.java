@@ -1452,17 +1452,27 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         } catch (Exception e){ /* best-effort */ }
     }
     /** [review 2026-09-10] resolves the sanctioned getFilesDir() first, then user.dir
-     *  (compatibility); reuses ONE Clip per file (no native audio-line leak); warns once. */
+     *  (compatibility); reuses ONE Clip per file (no native audio-line leak);
+     *  every failure path is surfaced once in Messages (no silent audio). */
     private final java.util.Map<String,Clip> soundClips=new java.util.HashMap<>();
-    private boolean soundWarned=false;
+    private boolean soundFileWarned=false;
+    private boolean soundPlayWarned=false;
+    private void warnSoundFile(String msg){
+        if (soundFileWarned) return; soundFileWarned=true;
+        try { context.getConsole().getWarn().println(msg); } catch (Exception ignore){}
+    }
+    private void warnSoundPlay(String msg){
+        if (soundPlayWarned) return; soundPlayWarned=true;
+        try { context.getConsole().getWarn().println(msg); } catch (Exception ignore){}
+    }
     private void playSound(String filename){
         if (filename.equals("None")||context==null) return;
         try {
             File soundFile=resolveSoundFile(filename);
             if (soundFile==null){
-                if (!soundWarned){ soundWarned=true;
-                    context.getConsole().getWarn().println("TTFMEssence: sound file '"+filename+"' not found in "+filesDir()
-                        +" or user.dir - alerts will be silent (wavs ship in jforex/sounds/)"); }
+                File fd=null; try { fd=filesDir(); } catch (Exception ignore){}
+                warnSoundFile("TTFMEssence: sound file '"+filename+"' not found in "+fd+" or "+System.getProperty("user.dir")
+                    +" - copy alert.wav / retest.wav there (they ship in jforex/sounds/)");
                 return;
             }
             Clip clip=soundClips.get(filename);
@@ -1470,11 +1480,14 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             if (clip.isRunning()) clip.stop();
             AudioInputStream audioIn=AudioSystem.getAudioInputStream(soundFile);
             clip.open(audioIn); clip.start();
-        } catch (Exception e){ /* silent fallback, reference behaviour */ }
+        } catch (Exception e){
+            warnSoundPlay("TTFMEssence: sound playback failed ("+filename+"): "+e);
+        }
     }
     private File resolveSoundFile(String filename){
-        File a=new File(filesDir(),filename);
-        if (a.exists()) return a;
+        File fd=null;
+        try { fd=filesDir(); } catch (Exception ignore){}
+        if (fd!=null){ File a=new File(fd,filename); if (a.exists()) return a; }
         File b=new File(System.getProperty("user.dir"),filename);
         if (b.exists()) return b;
         return null;
