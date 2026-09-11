@@ -322,7 +322,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     // REMOVAL (if not wanted): delete this block's 2 fields + 3 state fields, the 2 option
     //   lines + 2 setters in buildOptions, buildHtfFvgZones() + its 1-line call in calculate,
     //   detectHtfFvgZones()/pdhPdlOf(), drawFvgHtf()/drawFvgChart()/drawPdhPdl()/
-    //   drawHtfLevel()/fmtPdhPdl() + their 3 calls in drawOutput, the "2*cW" in the
+    //   fmtPdhPdl() + their 3 calls in drawOutput, the "2*cW" in the
     //   bodyWidth line (revert to cW), and the [HTF] test block in TTFMEssenceTest
     //   (incl. the 22-options assert, revert to 20). Zero residue = green suites.
     boolean fvgOnChart = true;   // [HTF] FVG on Chart Candles (default ON; layer columns always ON)
@@ -2266,7 +2266,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     }
 
     // ---------------- [HTF] FVG (upper layers) + PDH/PDL — REMOVAL note at the block top ----------------
-    /** [HTF] FVG bands on the upper-layer cluster COLUMNS — always visible (agreement 2026-09-11). */
+    /** [HTF] FVG bands on the upper-layer cluster COLUMNS — always visible (agreement 2026-09-11).
+     *  v2 aesthetics (2026-09-11, user: "بدون حدود"): soft lane fill only, NO borders, no inner text. */
     private void drawFvgHtf(Graphics2D g2,IIndicatorDrawingSupport support,float slot,int[] base,int lastCandle,float cW){
         List<double[]> zs;
         synchronized (drawLock){ zs=new ArrayList<>(fvgHtfZones); }
@@ -2290,43 +2291,61 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             if (x1<=x0||yB<=yT) continue;
             boolean bull=z[3]==1, active=z[4]==0;
             Color col=bull?(active?new Color(38,166,154):new Color(154,160,166)):(active?new Color(239,83,80):new Color(154,160,166));
-            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.22f));
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,active?0.16f:0.06f));
             g2.setColor(col); g2.fillRect(x0,yT,x1-x0,yB-yT);
-            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
-            g2.setStroke(new BasicStroke(1f)); g2.setColor(col); g2.drawRect(x0,yT,x1-x0,yB-yT);
         }
         g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
     }
-    /** [HTF] the same FVG zones extended over the base-chart candles (toggle, default ON). */
+    /** [HTF] the same FVG zones extended over the base-chart candles (toggle, default ON).
+     *  v2 aesthetics (2026-09-11, user: "بدون حدود"): gradient fade 16%->3%, NO borders;
+     *  right-edge label on ACTIVE zones only; anti-clutter: last 4 zones per layer. */
     private void drawFvgChart(Graphics2D g2,IIndicatorDrawingSupport support){
         if (!fvgOnChart) return;
         List<double[]> zs;
         synchronized (drawLock){ zs=new ArrayList<>(fvgHtfZones); }
         if (zs.isEmpty()) return;
         int chartW=support.getChartWidth();
-        Stroke oldStroke=g2.getStroke();
-        for (double[] z:zs){
+        List<double[]> show=new ArrayList<>(zs.size());
+        java.util.Map<Integer,Integer> cnt=new java.util.HashMap<>();
+        for (int i=zs.size()-1;i>=0;i--){
+            int li=(int)zs.get(i)[5];
+            if (cnt.getOrDefault(li,0)<4){ cnt.put(li,cnt.get(li)+1); show.add(zs.get(i)); }
+        }
+        java.util.Collections.reverse(show); // chronological: newest on top
+        java.awt.Paint oldPaint=g2.getPaint(); Font oldFont=g2.getFont();
+        for (double[] z:show){
+            int li=(int)z[5];
             int x0=support.getXForTime((long)z[2],false);
             if (x0>chartW) continue;
             if (x0<0) x0=0;
             int yT=(int)support.getYForValue(z[1]), yB=(int)support.getYForValue(z[0]);
             if (yB<=yT) continue;
             boolean bull=z[3]==1, active=z[4]==0;
-            Color col=bull?(active?new Color(38,166,154):new Color(154,160,166)):(active?new Color(239,83,80):new Color(154,160,166));
-            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.12f));
-            g2.setColor(col); g2.fillRect(x0,yT,chartW-x0,yB-yT);
-            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.9f));
-            g2.setStroke(new BasicStroke(1f,BasicStroke.CAP_BUTT,BasicStroke.JOIN_MITER,10f,new float[]{6f,4f},0f));
-            g2.setColor(col); g2.drawLine(x0,yT,chartW,yT); g2.drawLine(x0,yB,chartW,yB);
-            if (yB-yT>16){
-                g2.setFont(new Font("SansSerif",Font.BOLD,9));
-                g2.drawString("FVG "+SHORT_LABELS[layers[(int)z[5]].periodIndex],x0+4,yT+11);
+            if (!active){ // filled: whisper gray, no label
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.05f));
+                g2.setPaint(new Color(154,160,166));
+                g2.fillRect(x0,yT,chartW-x0,yB-yT);
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
+                continue;
             }
+            Color col=bull?new Color(38,166,154):new Color(239,83,80);
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
+            g2.setPaint(new java.awt.GradientPaint(x0,yT,col,chartW,yT,new Color(col.getRed(),col.getGreen(),col.getBlue(),0)));
+            g2.fillRect(x0,yT,chartW-x0,yB-yT);
+            g2.setPaint(oldPaint);
+            g2.setFont(new Font("SansSerif",Font.BOLD,9));
+            FontMetrics fm=g2.getFontMetrics();
+            String lab="FVG "+SHORT_LABELS[layers[li].periodIndex];
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.7f));
+            g2.setColor(col);
+            g2.drawString(lab,chartW-fm.stringWidth(lab)-4,(yT+yB)/2+3);
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
         }
-        g2.setStroke(oldStroke);
+        g2.setFont(oldFont);
         g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
     }
-    /** [HTF] PDH/PDL = hi/lo of the last COMPLETED D candle; dashed lines across the current model day. */
+    /** [HTF] PDH/PDL = hi/lo of the last COMPLETED D candle; SOLID lines (no dashes) across the
+     *  current model day + colored price tags at the right edge (auto-shift if the range is narrow). */
     private void drawPdhPdl(Graphics2D g2,IIndicatorDrawingSupport support){
         if (!showPdhPdl) return;
         double hi,lo; long ds;
@@ -2335,17 +2354,26 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         int x0=support.getXForTime(ds,false);
         if (x0>support.getChartWidth()) return;
         if (x0<0) x0=0;
+        int yHi=(int)support.getYForValue(hi), yLo=(int)support.getYForValue(lo);
+        int chartW=support.getChartWidth();
+        Color hiC=new Color(255,152,0), loC=new Color(41,182,246);
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.8f));
+        g2.setColor(hiC); g2.drawLine(x0,yHi,chartW,yHi);
+        g2.setColor(loC); g2.drawLine(x0,yLo,chartW,yLo);
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
+        Font oldFont=g2.getFont();
+        g2.setFont(new Font("SansSerif",Font.BOLD,10));
         FontMetrics fm=g2.getFontMetrics();
-        drawHtfLevel(g2,support,x0,hi,new Color(255,152,0),"PDH "+fmtPdhPdl(hi),fm);
-        drawHtfLevel(g2,support,x0,lo,new Color(41,182,246),"PDL "+fmtPdhPdl(lo),fm);
-    }
-    private void drawHtfLevel(Graphics2D g2,IIndicatorDrawingSupport support,int x0,double v,Color c,String text,FontMetrics fm){
-        int y=(int)support.getYForValue(v);
-        Stroke oldStroke=g2.getStroke();
-        g2.setStroke(new BasicStroke(1f,BasicStroke.CAP_BUTT,BasicStroke.JOIN_MITER,10f,new float[]{6f,4f},0f));
-        g2.setColor(c); g2.drawLine(x0,y,support.getChartWidth(),y);
-        g2.setStroke(oldStroke);
-        drawBadge(g2,text,x0+1,y-16,fm,10,4,Color.decode("#0d1b2a"),c);
+        String th="PDH "+fmtPdhPdl(hi), tl="PDL "+fmtPdhPdl(lo);
+        int wH=fm.stringWidth(th)+12, wL=fm.stringWidth(tl)+12;
+        int tagH=fm.getAscent()+8;
+        int yTagHi=yHi-tagH/2, yTagLo=yLo-tagH/2;
+        if (Math.abs(yHi-yLo)<tagH+2) yTagLo=Math.max(yTagHi+tagH+2,yTagLo); // PDL tag below PDH tag
+        g2.setColor(hiC); g2.fillRoundRect(chartW-wH-4,yTagHi,wH,tagH,6,6);
+        g2.setColor(new Color(16,20,28)); g2.drawString(th,chartW-wH-4+6,yTagHi+fm.getAscent());
+        g2.setColor(loC); g2.fillRoundRect(chartW-wL-4,yTagLo,wL,tagH,6,6);
+        g2.setColor(new Color(16,20,28)); g2.drawString(tl,chartW-wL-4+6,yTagLo+fm.getAscent());
+        g2.setFont(oldFont);
     }
     private static String fmtPdhPdl(double v){ return String.format(java.util.Locale.US,"%.5f",v); }
 
