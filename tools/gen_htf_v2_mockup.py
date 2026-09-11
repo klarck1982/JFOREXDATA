@@ -177,11 +177,11 @@ def v2_pdhpx(px, val, colr, name):
 A(f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="Consolas,Menlo,monospace">')
 A(f'<defs>'
   f'<linearGradient id="gb" x1="0" y1="0" x2="1" y2="0">'
-  f'<stop offset="0" stop-color="rgba(38,166,154,0.16)"/>'
+  f'<stop offset="0" stop-color="rgba(38,166,154,0.12)"/>'
   f'<stop offset="1" stop-color="rgba(38,166,154,0.03)"/>'
   f'</linearGradient>'
   f'<linearGradient id="gr" x1="0" y1="0" x2="1" y2="0">'
-  f'<stop offset="0" stop-color="rgba(239,83,80,0.16)"/>'
+  f'<stop offset="0" stop-color="rgba(239,83,80,0.12)"/>'
   f'<stop offset="1" stop-color="rgba(239,83,80,0.03)"/>'
   f'</linearGradient>'
   f'</defs>')

@@ -124,9 +124,9 @@ LIGHT = ("#ffffff", "#e3e6ee", "#3a3f4a", "#8a8f9a", "#10141c")
 A(f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="Consolas,Menlo,monospace">')
 A(f'<defs>'
   f'<linearGradient id="gb" x1="0" y1="0" x2="1" y2="0">'
-  f'<stop offset="0" stop-color="rgba(38,166,154,0.16)"/><stop offset="1" stop-color="rgba(38,166,154,0.03)"/></linearGradient>'
+  f'<stop offset="0" stop-color="rgba(38,166,154,0.12)"/><stop offset="1" stop-color="rgba(38,166,154,0.03)"/></linearGradient>'
   f'<linearGradient id="gr" x1="0" y1="0" x2="1" y2="0">'
-  f'<stop offset="0" stop-color="rgba(239,83,80,0.16)"/><stop offset="1" stop-color="rgba(239,83,80,0.03)"/></linearGradient>'
+  f'<stop offset="0" stop-color="rgba(239,83,80,0.12)"/><stop offset="1" stop-color="rgba(239,83,80,0.03)"/></linearGradient>'
   f'</defs>')
 A(f'<rect width="{W}" height="{H}" fill="#14171f"/>')
 text(32, 34, "Same code, same alphas — how the v2 overlays read on each chart color system", 16, "#d1d4dc", "start", bold=True)
@@ -140,7 +140,7 @@ scene(px1, DARK)
 scene(px2, LIGHT)
 
 ly = Y1 + 66
-text(32, ly, "identical values in both: FVG fill 0.16->0.03, column lane 0.16 / filled 0.05-0.06, lines 1px @ 0.8, tags: colored bg + #10141c text", 11, "#787b86")
+text(32, ly, "identical values in both: FVG fill 0.12->0.03, column lane 0.16 / filled 0.05-0.06, lines 1px @ 0.8, tags: colored bg + #10141c text", 11, "#787b86")
 text(32, ly + 17, "if it reads too faint on YOUR background: raise alphas (say the word and I tune them for your theme)", 11, "#787b86")
 A('</svg>')
 

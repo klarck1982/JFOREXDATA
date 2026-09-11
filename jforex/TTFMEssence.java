@@ -2314,7 +2314,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
     }
     /** [HTF] the same FVG zones extended over the base-chart candles (toggle, default ON).
-     *  v2 aesthetics (2026-09-11, user: "بدون حدود"): gradient fade 16%->3%, NO borders;
+     *  v2 aesthetics (2026-09-11, user: "بدون حدود"): gradient fade 12%->3% (live fine-tune:
+     *  "خليه شفاف بشكل أكبر"), NO borders;
      *  right-edge label on ACTIVE zones only; anti-clutter: last 4 zones per layer.
      *  Fail-safe (live bug 2026-09-11: zone time outside loaded bars / degenerate gradient
      *  killed the rest of the draw, hiding PDH/PDL): every zone guarded, whole body
@@ -2348,7 +2349,10 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
                 }
                 Color col=bull?new Color(38,166,154):new Color(239,83,80);
                 g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
-                g2.setPaint(new java.awt.GradientPaint(x0,yT,col,chartW,yT,new Color(col.getRed(),col.getGreen(),col.getBlue(),0)));
+                // 12% -> 3% (live fine-tune 2026-09-11, user: "خليه شفاف بشكل أكبر"; original 16%->3%)
+                g2.setPaint(new java.awt.GradientPaint(x0,yT,
+                        new Color(col.getRed(),col.getGreen(),col.getBlue(),31),
+                        chartW,yT,new Color(col.getRed(),col.getGreen(),col.getBlue(),8)));
                 g2.fillRect(x0,yT,chartW-x0,yB-yT);
                 g2.setPaint(oldPaint);
                 g2.setFont(new Font("SansSerif",Font.BOLD,9));
