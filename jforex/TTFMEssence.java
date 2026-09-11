@@ -141,7 +141,6 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
 
 import com.dukascopy.api.IBar;
-import com.dukascopy.api.Instrument;
 import com.dukascopy.api.Period;
 import com.dukascopy.api.indicators.IIndicator;
 import com.dukascopy.api.indicators.IIndicatorContext;
@@ -157,7 +156,6 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     // ================== frozen constants ==================
     static final int MAX_CANDLES = 10;
     static final int MAX_LAYERS  = 3;
-    static final int MAX_SIGNALS = 5;
 
     static final int    PERIOD_COUNT = 8;
     static final long[] PERIOD_INTERVALS = {
@@ -210,14 +208,6 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         List<CandleData> historical = new ArrayList<>();
         double curO=Double.NaN,curH=Double.NaN,curL=Double.NaN,curC=Double.NaN;
         long curStart=0; boolean curActive=false;
-    }
-
-    static final class Signal {
-        long waveStart, confirmTime; double entry, stop; boolean bullish; String session;
-        int state = 0;
-        boolean icEarly = true;
-        int legCat = 1;
-        double t1 = Double.NaN, t2 = Double.NaN;
     }
 
     // ---------- AUTO layers: official fractal pairings + user 30m fix ----------
@@ -326,8 +316,6 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     private long journalDecisionsLastModified = 0;
     private long fibCacheWaveStart = -1;
     private double[] fibCacheResult = null;
-    private long lastAlertStartTime = 0;
-    private double lastAlertLevel = Double.NaN;
 
     static final class PendingCisdSetup {
         boolean active=false; long waveStartTime=0; int waveStartIdx=-1;
@@ -343,7 +331,6 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     boolean[] cisdStoredBullish = new boolean[MAX_CISD_STORED];
     double[] cisdStoredStopLevels = new double[MAX_CISD_STORED];
     long[] cisdStoredActivationTime = new long[MAX_CISD_STORED];
-    long[] cisdStoredDeactivationTime = new long[MAX_CISD_STORED];
     long[] cisdStoredBreakoutTime = new long[MAX_CISD_STORED];
     boolean[] cisdStoredLogged = new boolean[MAX_CISD_STORED];
     boolean[] cisdStoredRetestPlayed = new boolean[MAX_CISD_STORED];
@@ -1016,7 +1003,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             lastGridId=gridTz.getID();
             lastInstrument=inst;
             cisdStoredCount=0; pendingBullish.active=false; pendingBearish.active=false;
-            fibCacheWaveStart=-1; fibCacheResult=null; lastAlertStartTime=0; lastAlertLevel=Double.NaN;
+            fibCacheWaveStart=-1; fibCacheResult=null;
             sharedAlertLines.clear(); sharedFileLastModified=0; cisdLoaded=false;
             currentBias=0; currentInversion=false;
             for (LayerData l:layers){ l.historical.clear(); l.curActive=false; l.curO=l.curH=l.curL=l.curC=Double.NaN; l.curStart=0; }
@@ -1062,8 +1049,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             double[] arr=(double[])outputs[i];
             if (arr==null||arr.length!=length) outputs[i]=new double[length];
         }
+        List<CandleData> disp=displayList(primary); // [review] computed ONCE - identical for every bar index
         for (int idx=startIndex,a=0;idx<=endIndex;idx++,a++){
-            List<CandleData> disp=displayList(primary);
             for (int c=0;c<MAX_CANDLES;c++){
                 CandleData cd=(c<disp.size())?disp.get(c):null;
                 ((double[])outputs[c*4])[a]  =(cd!=null)?cd.open:Double.NaN;
@@ -1366,7 +1353,6 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
                 cisdStoredBullish[i]=cisdStoredBullish[i+1];
                 cisdStoredStopLevels[i]=cisdStoredStopLevels[i+1];
                 cisdStoredActivationTime[i]=cisdStoredActivationTime[i+1];
-                cisdStoredDeactivationTime[i]=cisdStoredDeactivationTime[i+1];
                 cisdStoredBreakoutTime[i]=cisdStoredBreakoutTime[i+1];
                 cisdStoredLogged[i]=cisdStoredLogged[i+1];
                 cisdStoredRetestPlayed[i]=cisdStoredRetestPlayed[i+1];
@@ -1394,7 +1380,6 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         cisdStoredBullish[idx]=bullish;
         cisdStoredStopLevels[idx]=stop;
         cisdStoredActivationTime[idx]=0;
-        cisdStoredDeactivationTime[idx]=Long.MAX_VALUE;
         cisdStoredBreakoutTime[idx]=breakoutTime;
         cisdStoredLogged[idx]=false;
         cisdStoredRetestPlayed[idx]=false;
@@ -1413,7 +1398,6 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         cisdStoredHTFActive[idx]=htfActive;
         cisdStoredMomVolActive[idx]=momVolActive;
         if (!cisdAlertSound.equals("None")) playSound(cisdAlertSound);
-        lastAlertStartTime=startTime; lastAlertLevel=entry;
         if (context!=null){ // files need the JForex context (tests run headless)
             writeSharedCISDLine(bullish,entry,breakoutTime,confirmed);
             writeCisdSignalToCsv(idx);
@@ -1467,16 +1451,33 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             journalDecisions.clear(); journalDecisionsLastModified=0;
         } catch (Exception e){ /* best-effort */ }
     }
+    /** [review 2026-09-10] resolves the sanctioned getFilesDir() first, then user.dir
+     *  (compatibility); reuses ONE Clip per file (no native audio-line leak); warns once. */
+    private final java.util.Map<String,Clip> soundClips=new java.util.HashMap<>();
+    private boolean soundWarned=false;
     private void playSound(String filename){
-        if (filename.equals("None")) return;
+        if (filename.equals("None")||context==null) return;
         try {
-            String userDir=System.getProperty("user.dir");
-            File soundFile=new File(userDir,filename);
-            if (!soundFile.exists()) return;
+            File soundFile=resolveSoundFile(filename);
+            if (soundFile==null){
+                if (!soundWarned){ soundWarned=true;
+                    context.getConsole().getWarn().println("TTFMEssence: sound file '"+filename+"' not found in "+filesDir()
+                        +" or user.dir - alerts will be silent (wavs ship in jforex/sounds/)"); }
+                return;
+            }
+            Clip clip=soundClips.get(filename);
+            if (clip==null){ clip=AudioSystem.getClip(); soundClips.put(filename,clip); }
+            if (clip.isRunning()) clip.stop();
             AudioInputStream audioIn=AudioSystem.getAudioInputStream(soundFile);
-            Clip clip=AudioSystem.getClip();
             clip.open(audioIn); clip.start();
         } catch (Exception e){ /* silent fallback, reference behaviour */ }
+    }
+    private File resolveSoundFile(String filename){
+        File a=new File(filesDir(),filename);
+        if (a.exists()) return a;
+        File b=new File(System.getProperty("user.dir"),filename);
+        if (b.exists()) return b;
+        return null;
     }
 
     // ---------------- files: journal CSV / properties / shared / decisions ----------------
@@ -1582,7 +1583,6 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
                 cisdStoredBullish[idx]=Boolean.parseBoolean(p.getProperty(pre+"bullish","false"));
                 cisdStoredBreakoutTime[idx]=Long.parseLong(p.getProperty(pre+"breakoutTime","0"));
                 cisdStoredActivationTime[idx]=0;
-                cisdStoredDeactivationTime[idx]=Long.MAX_VALUE;
                 cisdStoredLogged[idx]=false;
                 cisdStoredRetestPlayed[idx]=false;
                 cisdStoredConfirmed[idx]=Boolean.parseBoolean(p.getProperty(pre+"confirmed","false"));
@@ -1940,7 +1940,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             boolean sigBullish=cisdStoredBullish[i];
             int xStart=support.getXForTime(sigStart,false);
             int xBreakout=support.getXForTime(sigEnd,false);
-            if (xStart<0||xBreakout<0) continue;
+            if (xBreakout<0) continue;
+            if (xStart<0) xStart=0; // [review] clip at the screen edge instead of dropping the whole line
             int yLevel=(int)support.getYForValue(sigLevel);
             if (yLevel<0||yLevel>=support.getChartHeight()) continue;
             int xEnd=xBreakout+(int)(3*slot);

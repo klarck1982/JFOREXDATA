@@ -192,3 +192,26 @@ if (xStart < 0 || xBreakout < 0) continue;   // يهمل الخط كله إذا 
 7. كل بند: تعديل ← إعادة تجميع ← اختبارا الوحدات أخضران ← commit مستقل.
 
 **قاعدة العمل سارية:** لا تعديل قبل "اعتمد/نفّذ" صريح منك على كل بند.
+
+---
+
+## خامساً — حالة التنفيذ: النسخة التجريبية (2026-09-10)
+
+بقرار المستخدم: «بماتراه مناسب أعطيني نسخة تجريبية» — نُفّذت البنود التالية وأعيد التجميع + اختبارات خضراء (134/134 + 216/216):
+
+| البند | التنفيذ |
+|-------|---------|
+| 1+2 (HIGH) | **Core SMT:** كاش `smtCacheKey/smtLastClosedTime` — إعادة الجلب فقط عند **إقفال** شمعة جديدة (كانت كل tick)؛ `Instrument.fromString` الرسمي أولاً + fallback القديم؛ تحذير `getWarn()` **مرة واحدة** عند فشل حلّ الأداة |
+| 3+4 (MEDIUM) | **Essence صوت:** `Clip` واحد معاد استخدامه لكل ملف (انتهى التسريب) + `stop()` قبل إعادة الفتح؛ البحث: `getFilesDir()` **أولاً** ثم `user.dir` (توافق) + تحذير واحد مع ذكر المسار |
+| 5 (MEDIUM) | **كلاهما:** `displayList(primary)` رُفعت **فوق** حلقة ملء المخرجات (كانت N×W نسخة/تخصيصات لكل full recalc) |
+| 6 (MEDIUM) | **Core:** حُذفت `revBullMask/revBearMask` + دعوتا `reversalStages` (O(n)×2 في كل tick) + `profileName/profileStartMs` + `smtLabel` + `lastSignalBull/lastSignalBear` + دالة `reversalStages` الميتة (الدوال المجرّدة `profileOf/profileStart` بقيت — الاختبارات تغطيها) |
+| 8 (LOW) | **Core:** مسار الجورنال `new File(getFilesDir(), "TTFMCore_Signals.csv")` (سابقاً دمج سلاسل) |
+| 9 (LOW) | **Essence:** خطوط CISD تُقصّ عند الحافة (`xStart=max(xStart,0)`) بدل إهمال الخط كله |
+| 10 (LOW) | **Essence:** حُذف import `Instrument`، `MAX_SIGNALS`، `class Signal`، `lastAlertStartTime/lastAlertLevel`، `cisdStoredDeactivationTime` (مع تعديل ادعاء الاختبار الواحد المرتبط بها) |
+
+**مستثناة من النسخة التجريبية (قرار هندسي):**
+- 7 (عناوين DST) — جمالي فقط؛ 11 (sparceIndicator) — لا أثر وظيفي ويغيّر ما يمرّره المنصّة؛ 13 (سباق CSVs) — إعادة تصميم بروتوكول المشاركة = مخاطرة انحدار غير مبرّرة في نسخة تجريبية، بقي موثقاً كقيد مقبول؛ 14 (فرع XAU/EUR) — قرار منتج؛ 15 (كاش RB[]) — تحسين أداء إضافي يُبنى على هيكلة مختلفة.
+
+**stubs:** أُضيف `IConsole.getWarn()` و`Instrument.fromString` + تصحيح ثوابت Instrument إلى الثوابت الحقيقية الرسمية (`USATECHIDXUSD`...، إزالة `XAUEUR` غير الموجود) — stubs الآن تطابق Javadoc الرسمي.
+
+**النتيجة:** TTFMCore 1826→1807 سطراً، TTFMEssence 2240→2241 سطراً (نضيف إصلاح الصوت وننقص الميت).

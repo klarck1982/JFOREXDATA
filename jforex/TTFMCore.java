@@ -298,12 +298,13 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
     private boolean obBullBroken=false, obBearBroken=false;
     private int structTrend=0, structEvent=0;
     private int c2Idx=-1, c3Idx=-1; private double c2Entry=Double.NaN;
-    private int revBullMask=0, revBearMask=0;
-    private String profileName=""; private long profileStartMs=0;
     private long entryPairInterval=-1, eqPairInterval=-1;
     private final List<double[]> tspotZones=new ArrayList<>();  // {lo,hi,start,end}
     private double[] tspotZoneD=null;
-    private String smtLabel=null;
+    /** [SMT] per-bar cache: recompute only when the last CLOSED bar time changes
+     *  (peer data only changes at bar closes) — avoids 7x getBars on every tick. */
+    private String smtCacheKey=""; private long smtLastClosedTime=-1;
+    private boolean smtResolveWarned=false;
 
     private interface OptInputSetter { void set(Object v); }
 
@@ -540,32 +541,6 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         double top=Math.max(c2.open,c2.close), bot=Math.min(c2.open,c2.close);
         return bullish?(c3.close>top):(c3.close<bot);
     }
-    /** [C] reversal sequence bitmask: 1 turtleSoup,2 inversion,4 cisdOrOB,8 fvg,16 breaker. */
-    static int reversalStages(RB[] bars,int i,boolean bullish,double avgRange,boolean cisdFired){
-        int mask=0;
-        if (i>=2){
-            double[] sw=findLastTwoSwings(bars,!bullish,50);
-            if (sw!=null){
-                double lvl=sw[3];
-                boolean swept=bullish?(bars[i].l<lvl&&bars[i].c>lvl):(bars[i].h>lvl&&bars[i].c<lvl);
-                if (swept) mask|=1;
-            }
-        }
-        if (i>=1){
-            double prevEq=(bars[i-1].h+bars[i-1].l)/2.0;
-            boolean inv=bullish?(bars[i].l<prevEq&&bars[i].c>prevEq):(bars[i].h>prevEq&&bars[i].c<prevEq);
-            if (inv) mask|=2;
-        }
-        int ob=findOrderBlock(bars,i,bullish,avgRange);
-        if (cisdFired||ob>=0) mask|=4;
-        if (detectFVG(bars,i,bullish)!=null) mask|=8;
-        for (int k=Math.max(2,i-30);k<i;k++){
-            int obk=findOrderBlock(bars,k,bullish,avgRange);
-            if (obk>=0&&obBreached(bars,obk,bullish)){ mask|=16; break; }
-        }
-        return mask;
-    }
-
     // ---------- v4: profiles, pairings, SMT (pure) ----------
     /** [C] session-anchored 7H profiles (NOT equal buckets): Asia 18:00 / London 01:00 / NY 08:00 (NY TZ). */
     static String profileOf(long timeMs,TimeZone ny){
@@ -891,15 +866,15 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         if (showCISD) detectCisd(bars,detectionIndex,periodMs,primary);
         updateSignalStates(bars,primary);
         updateConceptState(bars,primary,periodMs);
-        fetchSmt(periodMs);
+        fetchSmt(periodMs,bars.length>1?bars[bars.length-2].time:-1); // [SMT] recompute only on new closed bar
 
         int length=endIndex-startIndex+1;
         for (int i=0;i<outputs.length;i++){
             double[] arr=(double[])outputs[i];
             if (arr==null||arr.length!=length) outputs[i]=new double[length];
         }
+        List<CandleData> disp=displayList(primary); // [review] computed ONCE - identical for every bar index
         for (int idx=startIndex,a=0;idx<=endIndex;idx++,a++){
-            List<CandleData> disp=displayList(primary);
             for (int c=0;c<MAX_CANDLES;c++){
                 CandleData cd=(c<disp.size())?disp.get(c):null;
                 ((double[])outputs[c*4])[a]  =(cd!=null)?cd.open:Double.NaN;
@@ -1050,13 +1025,13 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
 
     private void writeJournal(Signal s,long periodMs){
         try {
-            String path=context.getFilesDir()+File.separator+"TTFMCore_Signals.csv";
-            File f=new File(path); boolean exists=f.exists();
+            File f=new File(context.getFilesDir(),"TTFMCore_Signals.csv"); // [review] canonical File-based path
+            boolean exists=f.exists();
             String tf=tfShort(periodMs);
             String dir=s.bullish?"BUY":"SELL";
             String inst=context.getFeedDescriptor().getInstrument().toString().replace("/","_").replace(".","_");
             String id=inst+"_"+tf+"_"+dir+"_"+s.confirmTime;
-            try (PrintWriter pw=new PrintWriter(new FileWriter(path,true))){
+            try (PrintWriter pw=new PrintWriter(new FileWriter(f,true))){
                 if (!exists) pw.println("SignalID,SignalTimeNY,WaveStartNY,Instrument,TF,Direction,Entry,Stop,Session,ICEarly,LegCat,T1,T2,Bias");
                 pw.printf(Locale.US,"%s,%s,%s,%s,%s,%s,%.6f,%.6f,%s,%s,%d,%.6f,%.6f,%d%n",
                         id,nyFormat.format(new Date(s.confirmTime+periodMs)),nyFormat.format(new Date(s.waveStart)),
@@ -1440,11 +1415,6 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
             }
         }
 
-        revBullMask=reversalStages(bars,bars.length-1,true,chartAvgRange,lastSignalBull());
-        revBearMask=reversalStages(bars,bars.length-1,false,chartAvgRange,lastSignalBear());
-
-        long now=bars[bars.length-1].time;
-        profileName=profileOf(now,nyTZ); profileStartMs=profileStart(now,nyTZ);
         entryPairInterval=entryPairFor(periodMs); eqPairInterval=eqPairFor(periodMs);
 
         tspotZones.clear(); tspotZoneD=null;
@@ -1490,19 +1460,26 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         if (!bull&&obBearIdx>=0) return true;
         return false;
     }
-    private boolean lastSignalBull(){ for (int i=signals.size()-1;i>=0;i--) if (signals.get(i).bullish) return true; return false; }
-    private boolean lastSignalBear(){ for (int i=signals.size()-1;i>=0;i--) if (!signals.get(i).bullish) return true; return false; }
-
     // ---- SMT (cross-instrument via history) ----
-    private void fetchSmt(long periodMs){
-        smtLabel=null; smtCracks=null;
+    /** [SMT review 2026-09-10] cached per last CLOSED bar: peer bars only change at
+     *  bar closes, so ticks of the forming bar no longer re-pull 7x getBars. */
+    private void fetchSmt(long periodMs,long lastClosedTime){
         if (!smtEnabled||context==null) return;
+        String me=context.getFeedDescriptor().getInstrument().toString();
+        String key=me+"|"+periodMs;
+        if (key.equals(smtCacheKey)&&lastClosedTime==smtLastClosedTime) return; // nothing new since last close
+        smtCracks=null;
         try {
-            String me=context.getFeedDescriptor().getInstrument().toString();
             IHistory hist=context.getHistory();
             Period p=context.getFeedDescriptor().getPeriod();
             long now=System.currentTimeMillis(), start=now-120*periodMs;
-            RB[] mine=fetchRB(hist,resolveInstrument(me),p,start,now);
+            Instrument mineInst=resolveInstrument(me);
+            if (mineInst==null){
+                if (!smtResolveWarned){ smtResolveWarned=true;
+                    context.getConsole().getWarn().println("TTFMCore SMT: cannot resolve instrument '"+me+"' - SMT(Auto) disabled"); }
+                return;
+            }
+            RB[] mine=fetchRB(hist,mineInst,p,start,now);
             if (mine==null) return;
             List<String> cracks=new ArrayList<>();
             for (String other:SMT_INSTRUMENTS){
@@ -1513,7 +1490,7 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
                 else if (smtDivergence(mine,ob,false,50)) cracks.add(shortSym(other)+"\u2193!");
             }
             smtCracks=cracks.isEmpty()?null:String.join(", ",cracks);
-            smtLabel=smtCracks!=null?("SMT(Auto): "+smtCracks):null;
+            smtCacheKey=key; smtLastClosedTime=lastClosedTime;
         } catch (Exception e){ /* best-effort */ }
     }
     private RB[] fetchRB(IHistory h,Instrument inst,Period p,long from,long to){
@@ -1526,7 +1503,11 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
             return a;
         } catch (Exception e){ return null; }
     }
+    /** [SMT review 2026-09-10] official Instrument.fromString("CUR1/CUR2") first
+     *  (returns null when not found), then the legacy name-normalization fallback. */
     private Instrument resolveInstrument(String sym){
+        try { Instrument i=Instrument.fromString(sym); if (i!=null) return i; }
+        catch (Throwable t){ /* very old API - fall through */ }
         try { return Instrument.valueOf(sym.replace("/","_").replace(".","_")); }
         catch (Exception e){
             try { return Instrument.valueOf(sym.replace("/","").replace(".","")); }

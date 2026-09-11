@@ -382,7 +382,7 @@ public class TTFMEssenceTest {
         check("ring caps at 3", ring.cisdStoredCount==3);
         check("ring shifted out oldest (idx0 = signal#2)", ring.cisdStoredStartTimes[0]==2000L&&ring.cisdStoredLevels[0]==102.0);
         check("ring newest at idx count-1", ring.cisdStoredStartTimes[2]==4000L&&ring.cisdStoredLevels[2]==104.0);
-        check("ring flags reset on store", ring.cisdStoredActivationTime[2]==0&&ring.cisdStoredDeactivationTime[2]==Long.MAX_VALUE
+        check("ring flags reset on store", ring.cisdStoredActivationTime[2]==0
             &&!ring.cisdStoredLogged[2]&&!ring.cisdStoredRetestPlayed[2]);
         ring.storeCisdSignal(4000L,2000L*4,104.0,103.0,true,8000L,false,false,null,false,"",true,true,true,true,true,true,true,true);
         check("duplicate not stored twice", ring.cisdStoredCount==3&&ring.cisdStoredEndTimes[2]==8000L);
