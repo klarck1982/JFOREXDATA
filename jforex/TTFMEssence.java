@@ -312,6 +312,11 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     private long sharedFileLastModified = 0;
     private final Object sharedFileLock = new Object();
     private final List<String[]> sharedAlertLines = new ArrayList<>();
+    /** [concurrency 2026-09-10] JForex4 runs calculate() and drawOutput() on
+     *  DIFFERENT threads (CME in drawTspot observed live). All shared collection
+     *  mutations in calculate are guarded; all draw-side reads take a snapshot.
+     *  static: aggregate() is a static helper and needs a lock without an instance. */
+    private static final Object drawLock = new Object();
     private final Map<String,String> journalDecisions = new java.util.HashMap<>();
     private long journalDecisionsLastModified = 0;
     private long fibCacheWaveStart = -1;
@@ -729,9 +734,11 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         if (!layer.curActive || ps!=layer.curStart){
             if (layer.curActive){
                 CandleData done=new CandleData(layer.curO,layer.curH,layer.curL,layer.curC,layer.curStart,true);
-                if (layer.historical.isEmpty()||layer.historical.get(layer.historical.size()-1).openTime!=layer.curStart)
-                    layer.historical.add(done);
-                if (layer.historical.size()>layer.candlesToShow+2) layer.historical.remove(0);
+                synchronized (drawLock){
+                    if (layer.historical.isEmpty()||layer.historical.get(layer.historical.size()-1).openTime!=layer.curStart)
+                        layer.historical.add(done);
+                    if (layer.historical.size()>layer.candlesToShow+2) layer.historical.remove(0);
+                }
             }
             layer.curStart=ps; layer.curO=bar.o; layer.curH=bar.h; layer.curL=bar.l; layer.curC=bar.c; layer.curActive=true;
         } else {
@@ -1004,9 +1011,12 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             lastInstrument=inst;
             cisdStoredCount=0; pendingBullish.active=false; pendingBearish.active=false;
             fibCacheWaveStart=-1; fibCacheResult=null;
-            sharedAlertLines.clear(); sharedFileLastModified=0; cisdLoaded=false;
+            sharedFileLastModified=0; cisdLoaded=false;
             currentBias=0; currentInversion=false;
-            for (LayerData l:layers){ l.historical.clear(); l.curActive=false; l.curO=l.curH=l.curL=l.curC=Double.NaN; l.curStart=0; }
+            synchronized (drawLock){
+                sharedAlertLines.clear();
+                for (LayerData l:layers){ l.historical.clear(); l.curActive=false; l.curO=l.curH=l.curL=l.curC=Double.NaN; l.curStart=0; }
+            }
         }
         TimeZone tz=gridTz;
 
@@ -1443,12 +1453,15 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     private void resetCISDData(){
         try {
             cisdStoredCount=0;
-            sharedAlertLines.clear();
+            synchronized (drawLock){ // [concurrency] draw thread may read these concurrently
+                sharedAlertLines.clear();
+                journalDecisions.clear();
+            }
+            journalDecisionsLastModified=0;
             File sharedFile=getSharedCISDPath(); if (sharedFile.exists()) sharedFile.delete();
             File signalFile=new File(filesDir(),"HigherTF_Signals.csv"); if (signalFile.exists()) signalFile.delete();
             File decisionsFile=getJournalDecisionsPath(); if (decisionsFile.exists()) decisionsFile.delete();
             File cisdFile=getCisdFilePath(); if (cisdFile.exists()) cisdFile.delete();
-            journalDecisions.clear(); journalDecisionsLastModified=0;
         } catch (Exception e){ /* best-effort */ }
     }
     /** [review 2026-09-10] resolves the sanctioned getFilesDir() first, then user.dir
@@ -1477,7 +1490,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             }
             Clip clip=soundClips.get(filename);
             if (clip==null){ clip=AudioSystem.getClip(); soundClips.put(filename,clip); }
-            if (clip.isRunning()) clip.stop();
+            if (clip.isOpen()){ if (clip.isRunning()) clip.stop(); clip.close(); } // [fix] re-open on replay
             AudioInputStream audioIn=AudioSystem.getAudioInputStream(soundFile);
             clip.open(audioIn); clip.start();
         } catch (Exception e){
@@ -1623,29 +1636,33 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         long modified=file.exists()?file.lastModified():0;
         if (modified==journalDecisionsLastModified) return;
         journalDecisionsLastModified=modified;
-        journalDecisions.clear();
-        if (!file.exists()) return;
-        try (BufferedReader reader=new BufferedReader(new FileReader(file))){
-            String line; boolean header=true;
-            while ((line=reader.readLine())!=null){
-                if (header){header=false;continue;}
-                String[] parts=line.replace("\"","").split(",",4);
-                if (parts.length>=2&&parts[0].trim().length()>0)
-                    journalDecisions.put(parts[0].trim(),parts[1].trim().toUpperCase());
-            }
-        } catch (IOException ignored){ }
+        Map<String,String> rebuilt=new java.util.HashMap<>(); // [concurrency] rebuild-then-swap (draw/UI threads read)
+        if (file.exists()){
+            try (BufferedReader reader=new BufferedReader(new FileReader(file))){
+                String line; boolean header=true;
+                while ((line=reader.readLine())!=null){
+                    if (header){header=false;continue;}
+                    String[] parts=line.replace("\"","").split(",",4);
+                    if (parts.length>=2&&parts[0].trim().length()>0)
+                        rebuilt.put(parts[0].trim(),parts[1].trim().toUpperCase());
+                }
+            } catch (IOException ignored){ }
+        }
+        synchronized (drawLock){ journalDecisions.clear(); journalDecisions.putAll(rebuilt); }
     }
     private String getSignalId(int index){
         String instrument=context.getFeedDescriptor().getInstrument().toString().replace("/","_").replace(".","_");
         return instrument+"_"+currentTfShort()+"_"+(cisdStoredBullish[index]?"BUY":"SELL")+"_"+cisdStoredEndTimes[index];
     }
     private String findJournalDecision(int index){
-        String exact=journalDecisions.get(getSignalId(index));
-        if (exact!=null) return exact;
-        String instrument=context.getFeedDescriptor().getInstrument().toString().replace("/","_").replace(".","_");
-        String suffix="_"+(cisdStoredBullish[index]?"BUY":"SELL")+"_"+cisdStoredEndTimes[index];
-        for (Map.Entry<String,String> en:journalDecisions.entrySet())
-            if (en.getKey().startsWith(instrument+"_")&&en.getKey().endsWith(suffix)) return en.getValue();
+        synchronized (drawLock){ // [concurrency] UI thread (reset) can clear the map concurrently
+            String exact=journalDecisions.get(getSignalId(index));
+            if (exact!=null) return exact;
+            String instrument=context.getFeedDescriptor().getInstrument().toString().replace("/","_").replace(".","_");
+            String suffix="_"+(cisdStoredBullish[index]?"BUY":"SELL")+"_"+cisdStoredEndTimes[index];
+            for (Map.Entry<String,String> en:journalDecisions.entrySet())
+                if (en.getKey().startsWith(instrument+"_")&&en.getKey().endsWith(suffix)) return en.getValue();
+        }
         return null;
     }
 
@@ -1758,32 +1775,34 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             }
         }
 
-        tspotZones.clear();
+        // [concurrency] rebuild into scratch list, publish atomically (draw thread reads tspotZones)
+        List<double[]> rebuilt=new ArrayList<>(tspotZones.size()+2);
         long pMs=PERIOD_INTERVALS[primary.periodIndex];
         for (int k=1;k<hist.size();k++){
             CandleData cN=hist.get(k-1), cN1=hist.get(k);
             if (!cN.completed) continue;
             if (!modelZoneGate(hist,k-1)) continue;
-            addTspotZone(tspotEQ(cN),cN1.open,cN1.openTime,cN1.openTime+pMs,bars,false);
+            addTspotZone(rebuilt,tspotEQ(cN),cN1.open,cN1.openTime,cN1.openTime+pMs,bars,false);
         }
         if (primary.curActive && hist.size()>=1){
             CandleData cN=hist.get(hist.size()-1);
             if (cN.completed){   // frozen: current-candle zone ALWAYS prints
                 long nowT=bars[bars.length-1].time;
                 long end=Math.max(primary.curStart+1,Math.min(nowT,primary.curStart+pMs));
-                addTspotZone(tspotEQ(cN),primary.curO,primary.curStart,end,bars,true);
+                addTspotZone(rebuilt,tspotEQ(cN),primary.curO,primary.curStart,end,bars,true);
             }
         }
+        synchronized (drawLock){ tspotZones.clear(); tspotZones.addAll(rebuilt); }
     }
 
-    private void addTspotZone(double eq,double open,long start,long end,RB[] bars,boolean current){
+    private void addTspotZone(List<double[]> out,double eq,double open,long start,long end,RB[] bars,boolean current){
         double[] z=tspotZone(eq,open);
         if (z==null) return;
         int type=tspotType(eq,open);
         int from=-1;
         for (int i=0;i<bars.length;i++) if (bars[i].time>=start){ from=i; break; }
         int state=(from<0)?0:zoneState(z[0],z[1],type,bars,from);
-        tspotZones.add(new double[]{z[0],z[1],start,end,type,state,current?1:0});
+        out.add(new double[]{z[0],z[1],start,end,type,state,current?1:0});
     }
     private boolean poiInRespectedHalf(CandleData c1,boolean bull){
         double eq=c1.candleEQ();
@@ -1829,7 +1848,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         for (int i=0;i<MAX_LAYERS;i++){
             LayerData layer=layers[i];
             if (!layer.enabled||PERIOD_INTERVALS[layer.periodIndex]<=chartInterval) continue;
-            List<CandleData> disp=displayList(layer);
+            List<CandleData> disp;
+            synchronized (drawLock){ disp=displayList(layer); } // [concurrency] snapshot (calculate appends)
             if (candleIdx>=disp.size()) continue;
             CandleData cd=disp.get(candleIdx);
             if (cd==null||!validOHLC(cd)) continue;
@@ -2041,15 +2061,17 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     }
     /** [reference drawSharedAlertsPanel] top-left cards for signals from ALL open charts (via SharedCISD.csv). */
     private void drawSharedAlertsPanel(Graphics2D g2,IIndicatorDrawingSupport support,Font oldFont){
-        if (!sharedCISDAlerts||sharedAlertLines.isEmpty()) return;
+        List<String[]> shared;
+        synchronized (drawLock){ shared=new ArrayList<>(sharedAlertLines); } // [concurrency] snapshot
+        if (!sharedCISDAlerts||shared.isEmpty()) return;
         Font cardFont=oldFont.deriveFont(Font.BOLD,8f);
         g2.setFont(cardFont);
         FontMetrics fm=g2.getFontMetrics();
         int cardHeight=fm.getHeight()+4;
         int cardPaddingX=4, cardArc=6;
         int panelX=10, panelY=20;
-        for (int i=0;i<sharedAlertLines.size();i++){
-            String[] parts=sharedAlertLines.get(i);
+        for (int i=0;i<shared.size();i++){
+            String[] parts=shared.get(i);
             if (parts.length<5) continue;
             String sym=parts[0];
             String tf=parts[1];
@@ -2085,7 +2107,9 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     /** elements 4,5,6: T-Spot zones on chart time axis; green BUY-support / red SELL-support;
      *  gray when historically invalidated; current zone always prints and grows; dotted bounds. */
     private void drawTspot(Graphics2D g2,IIndicatorDrawingSupport support){
-        for (double[] z:tspotZones){
+        List<double[]> zones;
+        synchronized (drawLock){ zones=new ArrayList<>(tspotZones); } // [concurrency] snapshot (calculate mutates)
+        for (double[] z:zones){
             double lo=z[0],hi=z[1]; int type=(int)z[4],state=(int)z[5];
             int yT=(int)support.getYForValue(hi), yB=(int)support.getYForValue(lo);
             if (yB<=yT) continue;
@@ -2118,7 +2142,8 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         int x2=support.getXForTime(endT,false);
         if (x1<0||x2<0||x2<=x1) return;
         CandleData prev=null;
-        List<CandleData> h=drawAnchor.historical;
+        List<CandleData> h;
+        synchronized (drawLock){ h=new ArrayList<>(drawAnchor.historical); } // [concurrency] snapshot (AIOOBE-safe)
         for (int k=h.size()-1;k>=0;k--) if (h.get(k).completed){ prev=h.get(k); break; }
         g2.setColor(BOUND_COLOR);
         g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.9f));

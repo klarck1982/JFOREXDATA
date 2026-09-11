@@ -305,6 +305,11 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
      *  (peer data only changes at bar closes) — avoids 7x getBars on every tick. */
     private String smtCacheKey=""; private long smtLastClosedTime=-1;
     private boolean smtResolveWarned=false;
+    /** [concurrency 2026-09-10] JForex4 runs calculate() and drawOutput() on
+     *  DIFFERENT threads (CME in drawTspot observed live). calculate guards shared
+     *  collection mutations; draw-side readers take snapshots. static: aggregate()
+     *  is a static helper and needs a lock accessible without an instance. */
+    private static final Object drawLock = new Object();
 
     private interface OptInputSetter { void set(Object v); }
 
@@ -385,10 +390,12 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         if (!layer.curActive || ps!=layer.curStart){
             if (layer.curActive){
                 CandleData done=new CandleData(layer.curO,layer.curH,layer.curL,layer.curC,layer.curStart,true);
-                if (layer.historical.isEmpty()||layer.historical.get(layer.historical.size()-1).openTime!=layer.curStart)
-                    layer.historical.add(done);
-                if (layer.historical.size()>layer.candlesToShow) layer.historical.remove(0);
-                if (layer.historical.size()>=2) refreshSweep(layer);
+                synchronized (drawLock){
+                    if (layer.historical.isEmpty()||layer.historical.get(layer.historical.size()-1).openTime!=layer.curStart)
+                        layer.historical.add(done);
+                    if (layer.historical.size()>layer.candlesToShow) layer.historical.remove(0);
+                    if (layer.historical.size()>=2) refreshSweep(layer);
+                }
             }
             layer.curStart=ps; layer.curO=bar.o; layer.curH=bar.h; layer.curL=bar.l; layer.curC=bar.c; layer.curActive=true;
         } else {
@@ -838,8 +845,11 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         long periodMs=context.getFeedDescriptor().getPeriod().getInterval();
         if (periodMs!=lastChartPeriodMs){
             lastChartPeriodMs=periodMs;
-            signals.clear(); pendingBullStart=pendingBearStart=-1; currentBias=0; currentInversion=false;
-            for (LayerData l:layers){ l.historical.clear(); l.curActive=false; l.lsActive=false; l.curO=l.curH=l.curL=l.curC=Double.NaN; l.curStart=0; }
+            pendingBullStart=pendingBearStart=-1; currentBias=0; currentInversion=false;
+            synchronized (drawLock){
+                signals.clear();
+                for (LayerData l:layers){ l.historical.clear(); l.curActive=false; l.lsActive=false; l.curO=l.curH=l.curL=l.curC=Double.NaN; l.curStart=0; }
+            }
         }
         TimeZone tz=getTimezone();
 
@@ -1007,8 +1017,10 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         s.t1=entry+dir*Math.abs(mult[0])*leg;
         s.t2=(mult.length>1)?entry+dir*Math.abs(mult[1])*leg:Double.NaN;
 
-        signals.add(s);
-        while (signals.size()>MAX_SIGNALS) signals.remove(0);
+        synchronized (drawLock){ // [concurrency] draw thread snapshots this list
+            signals.add(s);
+            while (signals.size()>MAX_SIGNALS) signals.remove(0);
+        }
         if (saveJournal) writeJournal(s,periodMs);
     }
 
@@ -1088,7 +1100,8 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         for (int i=0;i<MAX_LAYERS;i++){
             LayerData layer=layers[i];
             if (!layer.enabled||PERIOD_INTERVALS[layer.periodIndex]<=chartInterval) continue;
-            List<CandleData> disp=displayList(layer);
+            List<CandleData> disp;
+            synchronized (drawLock){ disp=displayList(layer); } // [concurrency] snapshot (calculate appends)
             if (candleIdx>=disp.size()) continue;
             CandleData cd=disp.get(candleIdx);
             if (cd==null||!validOHLC(cd)) continue;
@@ -1268,9 +1281,11 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
     }
 
     private void drawCisdLines(Graphics2D g2,IIndicatorDrawingSupport support,float slot,Font oldFont){
-        if (!showCISD||signals.isEmpty()) return;
+        List<Signal> sigs;
+        synchronized (drawLock){ sigs=new ArrayList<>(signals); } // [concurrency] snapshot (calculate mutates)
+        if (!showCISD||sigs.isEmpty()) return;
         String tf=tfShort(context.getFeedDescriptor().getPeriod().getInterval());
-        for (Signal s:signals){
+        for (Signal s:sigs){
             int x1=support.getXForTime(s.waveStart,false);
             int x2=support.getXForTime(s.confirmTime,false);
             if (x1<0||x2<0) continue;
@@ -1360,7 +1375,7 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         for (int i=bars.length-n;i<bars.length;i++) ar+=bars[i].h-bars[i].l;
         chartAvgRange=(n>0)?ar/n:0;
 
-        fvgZones.clear();
+        List<double[]> rebuiltFvg=new ArrayList<>(6); // [concurrency] rebuild-then-swap (draw thread reads fvgZones)
         if (fvgSourceLayer==1 && drawAnchor!=null){
             List<CandleData> h=drawAnchor.historical;
             RB[] hb=new RB[h.size()];
@@ -1368,16 +1383,17 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
                 CandleData c=h.get(i);
                 hb[i]=new RB(c.openTime,c.open,c.high,c.low,c.close,0);
             }
-            for (int i=Math.max(2,hb.length-40); i<hb.length && fvgZones.size()<6; i++){
-                double[] zb=detectFVG(hb,i,true);  if (zb!=null) fvgZones.add(new double[]{zb[0],zb[1],1,hb[i].time});
-                double[] zs=detectFVG(hb,i,false); if (zs!=null) fvgZones.add(new double[]{zs[0],zs[1],0,hb[i].time});
+            for (int i=Math.max(2,hb.length-40); i<hb.length && rebuiltFvg.size()<6; i++){
+                double[] zb=detectFVG(hb,i,true);  if (zb!=null) rebuiltFvg.add(new double[]{zb[0],zb[1],1,hb[i].time});
+                double[] zs=detectFVG(hb,i,false); if (zs!=null) rebuiltFvg.add(new double[]{zs[0],zs[1],0,hb[i].time});
             }
         } else {
-            for (int i=Math.max(2,bars.length-40); i<bars.length && fvgZones.size()<6; i++){
-                double[] zb=detectFVG(bars,i,true);  if (zb!=null) fvgZones.add(new double[]{zb[0],zb[1],1,bars[i].time});
-                double[] zs=detectFVG(bars,i,false); if (zs!=null) fvgZones.add(new double[]{zs[0],zs[1],0,bars[i].time});
+            for (int i=Math.max(2,bars.length-40); i<bars.length && rebuiltFvg.size()<6; i++){
+                double[] zb=detectFVG(bars,i,true);  if (zb!=null) rebuiltFvg.add(new double[]{zb[0],zb[1],1,bars[i].time});
+                double[] zs=detectFVG(bars,i,false); if (zs!=null) rebuiltFvg.add(new double[]{zs[0],zs[1],0,bars[i].time});
             }
         }
+        synchronized (drawLock){ fvgZones.clear(); fvgZones.addAll(rebuiltFvg); }
         obBullIdx=findOrderBlock(bars,bars.length-1,true,chartAvgRange);
         obBearIdx=findOrderBlock(bars,bars.length-1,false,chartAvgRange);
         obBullBroken=obBreached(bars,obBullIdx,true);
@@ -1417,22 +1433,25 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
 
         entryPairInterval=entryPairFor(periodMs); eqPairInterval=eqPairFor(periodMs);
 
-        tspotZones.clear(); tspotZoneD=null;
+        tspotZoneD=null;
+        // [concurrency] rebuild into scratch list, publish atomically (draw thread reads tspotZones)
+        List<double[]> rebuilt=new ArrayList<>(tspotZones.size()+2);
         long pMs=PERIOD_INTERVALS[primary.periodIndex];
         for (int k=1;k<hist.size();k++){
             CandleData cN=hist.get(k-1), cN1=hist.get(k);
             if (!cN.completed) continue;
             if (!modelZoneGen(hist,k-1)) continue;   // official: model C2/C3 candles only
-            addTspotZone(tspotEQ(cN),cN1.open,cN1.openTime,cN1.openTime+pMs,bars,false);
+            addTspotZone(rebuilt,tspotEQ(cN),cN1.open,cN1.openTime,cN1.openTime+pMs,bars,false);
         }
         if (primary.curActive && hist.size()>=1){
             CandleData cN=hist.get(hist.size()-1);
             if (cN.completed && (tspotCurrentAlways || modelZoneGen(hist,hist.size()-1))){
                 long nowT=bars[bars.length-1].time;   // official: zone GROWS with the forming HTF candle
                 long end=Math.max(primary.curStart+1,Math.min(nowT,primary.curStart+pMs));
-                addTspotZone(tspotEQ(cN),primary.curO,primary.curStart,end,bars,true);
+                addTspotZone(rebuilt,tspotEQ(cN),primary.curO,primary.curStart,end,bars,true);
             }
         }
+        synchronized (drawLock){ tspotZones.clear(); tspotZones.addAll(rebuilt); }
         if (!tspotZones.isEmpty()){
             double[] lz=tspotZones.get(tspotZones.size()-1); tspotZoneD=new double[]{lz[0],lz[1]};
         }
@@ -1443,14 +1462,14 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         }
     }
 
-    private void addTspotZone(double eq,double open,long start,long end,RB[] bars,boolean current){
+    private void addTspotZone(List<double[]> out,double eq,double open,long start,long end,RB[] bars,boolean current){
         double[] z=tspotZone(eq,open);
         if (z==null) return;
         int type=tspotType(eq,open);
         int from=-1;
         for (int i=0;i<bars.length;i++) if (bars[i].time>=start){ from=i; break; }
         int state=(from<0)?0:zoneState(z[0],z[1],type,bars,from);
-        tspotZones.add(new double[]{z[0],z[1],start,end,type,state,current?1:0});
+        out.add(new double[]{z[0],z[1],start,end,type,state,current?1:0});
     }
     private boolean poiInRespectedHalf(CandleData c1,boolean bull){
         double eq=c1.candleEQ();
@@ -1530,13 +1549,16 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         if (ai<0||ai>=MAX_LAYERS) return;
         long chartInterval=context.getFeedDescriptor().getPeriod().getInterval();
         if (PERIOD_INTERVALS[drawAnchor.periodIndex]<=chartInterval) return;   // anchor has no overlay columns
-        List<CandleData> disp=displayList(drawAnchor);
+        List<CandleData> disp;
+        synchronized (drawLock){ disp=displayList(drawAnchor); } // [concurrency] snapshot
         if (disp==null||disp.isEmpty()) return;
         long periodMs=PERIOD_INTERVALS[drawAnchor.periodIndex];
         int bodyWidth=(int)Math.max(1,Math.min(cW*(candleBodyScale/100.0f),Math.max(1,slot-2)));
         int halfBody=Math.max(1,bodyWidth/2);
         int side=(drawAnchor.positionOption==0)?first:last;
-        for (double[] z:fvgZones){
+        List<double[]> fvgs;
+        synchronized (drawLock){ fvgs=new ArrayList<>(fvgZones); } // [concurrency] snapshot
+        for (double[] z:fvgs){
             long t=(long)z[3];
             int j=-1;
             for (int k=0;k<disp.size();k++){
@@ -1586,7 +1608,8 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         int x2=support.getXForTime(endT,false);
         if (x1<0||x2<0||x2<=x1) return;
         CandleData prev=null;
-        List<CandleData> h=drawAnchor.historical;
+        List<CandleData> h;
+        synchronized (drawLock){ h=new ArrayList<>(drawAnchor.historical); } // [concurrency] snapshot (AIOOBE-safe)
         for (int k=h.size()-1;k>=0;k--) if (h.get(k).completed){ prev=h.get(k); break; }
         g2.setColor(CLOSURE_COLORS[boundColorIndex]);
         g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.9f));
@@ -1604,7 +1627,8 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
     private void drawHtfBounds(Graphics2D g2,IIndicatorDrawingSupport support){
         if (drawAnchor==null) return;
         g2.setColor(new Color(205,205,205)); g2.setStroke(new BasicStroke(0.8f));
-        List<CandleData> h=drawAnchor.historical;
+        List<CandleData> h;
+        synchronized (drawLock){ h=new ArrayList<>(drawAnchor.historical); } // [concurrency] snapshot
         for (int k=Math.max(0,h.size()-80);k<h.size();k++){
             int x=support.getXForTime(h.get(k).openTime,false);
             if (x>=0) g2.drawLine(x,0,x,support.getChartHeight());
@@ -1676,7 +1700,9 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
      *  forms then rejects down). Flat translucent fill; solid line on the OPEN bound,
      *  dotted line on the EQ bound; no border, no zone text (official look). */
     private void drawTspot(Graphics2D g2,IIndicatorDrawingSupport support){
-        for (double[] z:tspotZones){
+        List<double[]> zones;
+        synchronized (drawLock){ zones=new ArrayList<>(tspotZones); } // [concurrency] snapshot (calculate mutates)
+        for (double[] z:zones){
             double lo=z[0],hi=z[1]; int type=(int)z[4],state=(int)z[5];
             if (type==0&&!tspotBull) continue;
             if (type==1&&!tspotBear) continue;
@@ -1711,13 +1737,16 @@ public class TTFMCore implements IIndicator, IDrawingIndicator {
         if (ai<0||ai>=MAX_LAYERS) return;
         long chartInterval=context.getFeedDescriptor().getPeriod().getInterval();
         if (PERIOD_INTERVALS[drawAnchor.periodIndex]<=chartInterval) return;
-        List<CandleData> disp=displayList(drawAnchor);
+        List<CandleData> disp;
+        synchronized (drawLock){ disp=displayList(drawAnchor); } // [concurrency] snapshot
         if (disp==null||disp.isEmpty()) return;
         long periodMs=PERIOD_INTERVALS[drawAnchor.periodIndex];
         int bodyWidth=(int)Math.max(1,Math.min(cW*(candleBodyScale/100.0f),Math.max(1,slot-2)));
         int halfBody=Math.max(1,bodyWidth/2);
         int side=(drawAnchor.positionOption==0)?first:last;
-        for (double[] z:tspotZones){
+        List<double[]> zones;
+        synchronized (drawLock){ zones=new ArrayList<>(tspotZones); } // [concurrency] snapshot
+        for (double[] z:zones){
             double lo=z[0],hi=z[1]; int type=(int)z[4],state=(int)z[5];
             if (type==0&&!tspotBull) continue;
             if (type==1&&!tspotBear) continue;

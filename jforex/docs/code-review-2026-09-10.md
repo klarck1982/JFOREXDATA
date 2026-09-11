@@ -215,3 +215,27 @@ if (xStart < 0 || xBreakout < 0) continue;   // يهمل الخط كله إذا 
 **stubs:** أُضيف `IConsole.getWarn()` و`Instrument.fromString` + تصحيح ثوابت Instrument إلى الثوابت الحقيقية الرسمية (`USATECHIDXUSD`...، إزالة `XAUEUR` غير الموجود) — stubs الآن تطابق Javadoc الرسمي.
 
 **النتيجة:** TTFMCore 1826→1807 سطراً، TTFMEssence 2240→2241 سطراً (نضيف إصلاح الصوت وننقص الميت).
+
+---
+
+## سادساً — اكتشافان جديدان من سجل JForex الحي (2026-09-10، خلال التجربة)
+
+### 16) HIGH (مؤكد حياً) — `ConcurrentModificationException` في `drawTspot` (08:11:29)
+
+```
+Exception in drawOutput method: java.util.ConcurrentModificationException
+  @ com.dukascopy.indicators.TTFMEssence.drawTspot(TTFMEssence.java:2074)
+```
+- **السبب:** JForex4 يشغّل `calculate()` و`drawOutput()` على **خيوط مختلفة** (عكس افتراض التصميم). قائمة `tspotZones` كانت تُبنى في calculate (clear+add) بينما يرسمها drawTspot بالـ iterator → CME.
+- **خلفي:** نفس النمط في `layer.historical` (add/remove في aggregate مقابل displayList في الرسم)، `sharedAlertLines`، `fvgZones` (Core)، `signals` (Core)، `journalDecisions` (clear من خيط الواجهة مقابل entrySet في الرسم)، وحلقات `size()+get()` التي كانت معرضة لـ AIOOBE عند trim متزامن.
+- **الإصلاح (نمط موحد):** قفل `drawLock` واحد — كل **تعديل** في calculate تحت القفل (أو rebuild-then-swap ذري: قائمة مؤقتة ثم clear+addAll داخل قفل واحد = لا وميض)، وكل **قراءة** في مسار الرسم تأخذ **snapshot**. 14 موقع قفل في Core + 10 في Essence. لا deadlocks (قفل واحد، تداخل أحادي الاتجاه `sharedFileLock→drawLock` فقط).
+
+### 17) MEDIUM (مؤكد حياً) — إعادة تشغيل الصوت تفشل (08:43:26)
+
+```
+TTFMEssence: sound playback failed (alert.wav):
+java.lang.IllegalStateException: Clip is already open with format PCM_SIGNED 22050.0 Hz...
+```
+- **السبب:** `clip.open()` على كليب **مفتوح بالفعل** (stop() لا يغلق). التنبيه **الأول** يعمل — الثاني فما بعده يفشل (هذا يؤكد أن المسار والصوت سليمان والملف موجود).
+- **الإصلاح:** `if (clip.isOpen()){ stop(); close(); }` قبل كل open.
+- **إضافة تشخيصية:** كل مسار فشل (ملف مفقود/خطأ تشغيل) يطبع تحذيراً واحداً في Messages مع السبب الحقيقي (النسخة السابقة كانت تبتلع الاستثناءات).
