@@ -317,6 +317,19 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
      *  mutations in calculate are guarded; all draw-side reads take a snapshot.
      *  static: aggregate() is a static helper and needs a lock without an instance. */
     private static final Object drawLock = new Object();
+
+    // ================== [HTF] FVG + PDH/PDL (agreement 2026-09-11) ==================
+    // REMOVAL (if not wanted): delete this block's 2 fields + 3 state fields, the 2 option
+    //   lines + 2 setters in buildOptions, buildHtfFvgZones() + its 1-line call in calculate,
+    //   detectHtfFvgZones()/pdhPdlOf(), drawFvgHtf()/drawFvgChart()/drawPdhPdl()/
+    //   drawHtfLevel()/fmtPdhPdl() + their 3 calls in drawOutput, the "2*cW" in the
+    //   bodyWidth line (revert to cW), and the [HTF] test block in TTFMEssenceTest
+    //   (incl. the 22-options assert, revert to 20). Zero residue = green suites.
+    boolean fvgOnChart = true;   // [HTF] FVG on Chart Candles (default ON; layer columns always ON)
+    boolean showPdhPdl = true;   // [HTF] Show PDH/PDL (default ON)
+    private final List<double[]> fvgHtfZones = new ArrayList<>(); // {lo,hi,time,bull,state,layerIdx}
+    private double pdhPdlHi=Double.NaN, pdhPdlLo=Double.NaN;
+    private long pdhPdlDayStart=0;
     private final Map<String,String> journalDecisions = new java.util.HashMap<>();
     private long journalDecisionsLastModified = 0;
     private long fibCacheWaveStart = -1;
@@ -804,6 +817,34 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         else        { if (bars[i-2].l > bars[i].h) return new double[]{bars[i].h, bars[i-2].l}; }
         return null;
     }
+    /** [HTF] 3-candle FVG zones over one layer's COMPLETED candles.
+     *  Zone = {lo,hi,time,bull,state}: time = bridging candle (i-1) openTime;
+     *  state 1 = a later candle closed beyond the far edge (filled). Repaint-safe. */
+    static List<double[]> detectHtfFvgZones(RB[] bars,int lookback,int max){
+        List<double[]> out=new ArrayList<>();
+        if (bars==null||bars.length<3) return out;
+        int from=Math.max(2,bars.length-lookback);
+        for (int i=from;i<bars.length&&out.size()<max;i++){
+            double lo,hi; boolean bull;
+            if (bars[i-2].h<bars[i].l){ lo=bars[i-2].h; hi=bars[i].l; bull=true; }
+            else if (bars[i-2].l>bars[i].h){ lo=bars[i].h; hi=bars[i-2].l; bull=false; }
+            else continue;
+            int state=0;
+            for (int k=i+1;k<bars.length;k++){
+                if (bull?bars[k].c<lo:bars[k].c>hi){ state=1; break; }
+            }
+            out.add(new double[]{lo,hi,bars[i-1].time,bull?1:0,state});
+        }
+        return out;
+    }
+    /** [HTF] {pdh,pdl,dayStart} from a D-layer: last COMPLETED candle hi/lo + current
+     *  model-day start (curStart while active, else last completed + 1 day). null if empty. */
+    static double[] pdhPdlOf(LayerData d){
+        if (d==null||d.historical.isEmpty()) return null;
+        CandleData lastC=d.historical.get(d.historical.size()-1);
+        long dayStart=d.curActive?d.curStart:lastC.openTime+PERIOD_INTERVALS[d.periodIndex];
+        return new double[]{lastC.high,lastC.low,dayStart};
+    }
     static int findOrderBlock(RB[] bars,int i,boolean bullish,double avgRange){
         if (i<1||i>=bars.length||avgRange<=0) return -1;
         double body=Math.abs(bars[i].c-bars[i].o);
@@ -967,6 +1008,11 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         // Countdown timer (agreement 2026-09-10, D6 wall clock): default ON; REMOVAL note at draw site
         opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[Display] Show Timer",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,BOOLEAN_VALUES,BOOLEAN_NAMES)));
         set.add(v->showTimer=((Integer)v)==1);
+        // [HTF] FVG + PDH/PDL (agreement 2026-09-11); REMOVAL note at the HTF block
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[HTF] FVG on Chart Candles",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->fvgOnChart=((Integer)v)==1);
+        opt.add(new com.dukascopy.api.indicators.OptInputParameterInfo("[HTF] Show PDH/PDL",com.dukascopy.api.indicators.OptInputParameterInfo.Type.OTHER,new com.dukascopy.api.indicators.IntegerListDescription(1,BOOLEAN_VALUES,BOOLEAN_NAMES)));
+        set.add(v->showPdhPdl=((Integer)v)==1);
         optInfos=opt.toArray(new com.dukascopy.api.indicators.OptInputParameterInfo[0]);
         optSetters=set.toArray(new OptInputSetter[0]);
     }
@@ -1053,6 +1099,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
         checkRetestFrequent(bars[bars.length-1]);
         updateSharedAlertsFromFile();
         updateConceptState(bars,primary,periodMs);
+        buildHtfFvgZones(bars); // [HTF] FVG zones + PDH/PDL (REMOVAL: this 1 line)
 
         int length=endIndex-startIndex+1;
         for (int i=0;i<outputs.length;i++){
@@ -1733,6 +1780,38 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     }
 
     // ==================================================================
+    //  [HTF] FVG zones (upper layers) + PDH/PDL  — REMOVAL note at the block top
+    // ==================================================================
+    /** [HTF] rebuild per-layer FVG zones (upper layers only) + PDH/PDL scalars.
+     *  Completed candles only (repaint-safe); atomic publish under drawLock. */
+    private void buildHtfFvgZones(RB[] bars){
+        long chartInterval=context.getFeedDescriptor().getPeriod().getInterval();
+        List<double[]> rebuilt=new ArrayList<>(12);
+        for (int li=0;li<MAX_LAYERS;li++){
+            LayerData l=layers[li];
+            if (!l.enabled||PERIOD_INTERVALS[l.periodIndex]<=chartInterval) continue;
+            List<CandleData> h;
+            synchronized (drawLock){ h=new ArrayList<>(l.historical); } // [concurrency] snapshot
+            int n=h.size();
+            if (n<3) continue;
+            RB[] hb=new RB[n];
+            for (int i=0;i<n;i++){ CandleData c=h.get(i); hb[i]=new RB(c.openTime,c.open,c.high,c.low,c.close,0); }
+            for (double[] z:detectHtfFvgZones(hb,40,6)) rebuilt.add(new double[]{z[0],z[1],z[2],z[3],z[4],li});
+        }
+        synchronized (drawLock){
+            fvgHtfZones.clear(); fvgHtfZones.addAll(rebuilt);
+            pdhPdlHi=Double.NaN; pdhPdlLo=Double.NaN; pdhPdlDayStart=0;
+            for (int li=0;li<MAX_LAYERS;li++){
+                LayerData d=layers[li];
+                if (!d.enabled||PERIOD_INTERVALS[d.periodIndex]!=24L*60*60*1000) continue;
+                double[] pp=pdhPdlOf(d); // historical read under drawLock (calculate mutates under same lock)
+                if (pp!=null){ pdhPdlHi=pp[0]; pdhPdlLo=pp[1]; pdhPdlDayStart=(long)pp[2]; }
+                break;
+            }
+        }
+    }
+
+    // ==================================================================
     //  concept state: legs for ladder + T-Spot zones (+internal POI gate)
     // ==================================================================
     private void updateConceptState(RB[] bars,LayerData primary,long periodMs){
@@ -1857,7 +1936,7 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
 
             int xCenter=(int)(support.getMiddleOfCandle(last)+slot*(base[i]+candleIdx));
             float maxWidth=Math.max(1,slot-2);
-            int bodyWidth=(int)Math.max(1,Math.min(cW,maxWidth));
+            int bodyWidth=(int)Math.max(1,Math.min(2*cW,maxWidth)); // [HTF] x2 candle width (agreement 2026-09-11; REMOVAL: revert to cW)
             int halfBody=Math.max(1,bodyWidth/2);
             int yO=(int)support.getYForValue(cd.open),yH=(int)support.getYForValue(cd.high);
             int yL=(int)support.getYForValue(cd.low),yC=(int)support.getYForValue(cd.close);
@@ -1942,6 +2021,9 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             drawTspot(g2,support);               // elements 4,5,6
             drawProjLadder(g2,support);          // element 9
             drawNyOpenLines(g2,support,oldFont); // session overlay (opt-in, OFF default)
+            drawFvgHtf(g2,support,slot,base,last,cW);  // [HTF] FVG on layer columns (always ON)
+            drawFvgChart(g2,support);               // [HTF] FVG on chart candles (toggle, ON)
+            drawPdhPdl(g2,support);                 // [HTF] PDH/PDL (toggle, ON)
             drawInfoPanel(g2,support,oldFont);   // element 10
         }
 
@@ -2182,6 +2264,90 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             g2.drawLine(0,ys,support.getChartWidth(),ys);
         }
     }
+
+    // ---------------- [HTF] FVG (upper layers) + PDH/PDL — REMOVAL note at the block top ----------------
+    /** [HTF] FVG bands on the upper-layer cluster COLUMNS — always visible (agreement 2026-09-11). */
+    private void drawFvgHtf(Graphics2D g2,IIndicatorDrawingSupport support,float slot,int[] base,int lastCandle,float cW){
+        List<double[]> zs;
+        synchronized (drawLock){ zs=new ArrayList<>(fvgHtfZones); }
+        if (zs.isEmpty()) return;
+        long chartInterval=context.getFeedDescriptor().getPeriod().getInterval();
+        float maxWidth=Math.max(1,slot-2);
+        int halfBody=Math.max(1,(int)Math.max(1,Math.min(2*cW,maxWidth))/2); // same width rule as the cluster loop
+        for (double[] z:zs){
+            int li=(int)z[5]; LayerData l=layers[li];
+            if (!l.enabled||PERIOD_INTERVALS[l.periodIndex]<=chartInterval) continue;
+            List<CandleData> disp;
+            synchronized (drawLock){ disp=displayList(l); }
+            long iv=PERIOD_INTERVALS[l.periodIndex];
+            int k=-1;
+            for (int i=0;i<disp.size();i++){ CandleData c=disp.get(i); if (c!=null&&z[2]>=c.openTime&&z[2]<c.openTime+iv){ k=i; break; } }
+            if (k<0) continue;
+            int b=base[li];
+            int x0=(int)(support.getMiddleOfCandle(lastCandle)+slot*(b+k))-halfBody-1;
+            int x1=(int)(support.getMiddleOfCandle(lastCandle)+slot*(b+disp.size()-1))+halfBody+1;
+            int yT=(int)support.getYForValue(z[1]), yB=(int)support.getYForValue(z[0]);
+            if (x1<=x0||yB<=yT) continue;
+            boolean bull=z[3]==1, active=z[4]==0;
+            Color col=bull?(active?new Color(38,166,154):new Color(154,160,166)):(active?new Color(239,83,80):new Color(154,160,166));
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.22f));
+            g2.setColor(col); g2.fillRect(x0,yT,x1-x0,yB-yT);
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
+            g2.setStroke(new BasicStroke(1f)); g2.setColor(col); g2.drawRect(x0,yT,x1-x0,yB-yT);
+        }
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
+    }
+    /** [HTF] the same FVG zones extended over the base-chart candles (toggle, default ON). */
+    private void drawFvgChart(Graphics2D g2,IIndicatorDrawingSupport support){
+        if (!fvgOnChart) return;
+        List<double[]> zs;
+        synchronized (drawLock){ zs=new ArrayList<>(fvgHtfZones); }
+        if (zs.isEmpty()) return;
+        int chartW=support.getChartWidth();
+        Stroke oldStroke=g2.getStroke();
+        for (double[] z:zs){
+            int x0=support.getXForTime((long)z[2],false);
+            if (x0>chartW) continue;
+            if (x0<0) x0=0;
+            int yT=(int)support.getYForValue(z[1]), yB=(int)support.getYForValue(z[0]);
+            if (yB<=yT) continue;
+            boolean bull=z[3]==1, active=z[4]==0;
+            Color col=bull?(active?new Color(38,166,154):new Color(154,160,166)):(active?new Color(239,83,80):new Color(154,160,166));
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.12f));
+            g2.setColor(col); g2.fillRect(x0,yT,chartW-x0,yB-yT);
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.9f));
+            g2.setStroke(new BasicStroke(1f,BasicStroke.CAP_BUTT,BasicStroke.JOIN_MITER,10f,new float[]{6f,4f},0f));
+            g2.setColor(col); g2.drawLine(x0,yT,chartW,yT); g2.drawLine(x0,yB,chartW,yB);
+            if (yB-yT>16){
+                g2.setFont(new Font("SansSerif",Font.BOLD,9));
+                g2.drawString("FVG "+SHORT_LABELS[layers[(int)z[5]].periodIndex],x0+4,yT+11);
+            }
+        }
+        g2.setStroke(oldStroke);
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
+    }
+    /** [HTF] PDH/PDL = hi/lo of the last COMPLETED D candle; dashed lines across the current model day. */
+    private void drawPdhPdl(Graphics2D g2,IIndicatorDrawingSupport support){
+        if (!showPdhPdl) return;
+        double hi,lo; long ds;
+        synchronized (drawLock){ hi=pdhPdlHi; lo=pdhPdlLo; ds=pdhPdlDayStart; } // [concurrency] consistent snapshot
+        if (Double.isNaN(hi)) return;
+        int x0=support.getXForTime(ds,false);
+        if (x0>support.getChartWidth()) return;
+        if (x0<0) x0=0;
+        FontMetrics fm=g2.getFontMetrics();
+        drawHtfLevel(g2,support,x0,hi,new Color(255,152,0),"PDH "+fmtPdhPdl(hi),fm);
+        drawHtfLevel(g2,support,x0,lo,new Color(41,182,246),"PDL "+fmtPdhPdl(lo),fm);
+    }
+    private void drawHtfLevel(Graphics2D g2,IIndicatorDrawingSupport support,int x0,double v,Color c,String text,FontMetrics fm){
+        int y=(int)support.getYForValue(v);
+        Stroke oldStroke=g2.getStroke();
+        g2.setStroke(new BasicStroke(1f,BasicStroke.CAP_BUTT,BasicStroke.JOIN_MITER,10f,new float[]{6f,4f},0f));
+        g2.setColor(c); g2.drawLine(x0,y,support.getChartWidth(),y);
+        g2.setStroke(oldStroke);
+        drawBadge(g2,text,x0+1,y-16,fm,10,4,Color.decode("#0d1b2a"),c);
+    }
+    private static String fmtPdhPdl(double v){ return String.format(java.util.Locale.US,"%.5f",v); }
 
     /** session overlay (agreement 2026-09-09, opt-in): dotted BLACK vertical at
      *  08:00 New York on each visible weekday + tiny tag on its own row.

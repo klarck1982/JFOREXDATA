@@ -308,14 +308,58 @@ public class TTFMEssenceTest {
         check("option Low stored raw 0 -> min 3", es.cisdSensitivity==0&&TTFMEssence.minWaveFor(es.cisdSensitivity)==3);
         es.setOptInputParameter(1, Integer.valueOf(2));
         check("option High stored raw 2 -> min 1", es.cisdSensitivity==2&&TTFMEssence.minWaveFor(es.cisdSensitivity)==1);
-        check("option group exposed (20 opts, idx0 Detection, idx1 MinWave)",
+        check("option group exposed (22 opts, idx0 Detection, idx1 MinWave)",
             es.getOptInputParameterInfo(0)!=null && es.getOptInputParameterInfo(1)!=null
             && es.getOptInputParameterInfo(17)!=null && es.getOptInputParameterInfo(18)!=null
-            && es.getOptInputParameterInfo(19)!=null && es.getOptInputParameterInfo(20)==null
+            && es.getOptInputParameterInfo(19)!=null && es.getOptInputParameterInfo(20)!=null
+            && es.getOptInputParameterInfo(21)!=null && es.getOptInputParameterInfo(22)==null
             && es.getOptInputParameterInfo(0).getName().equals("[CISD] Detection")
             && es.getOptInputParameterInfo(1).getName().equals("[CISD] Min Wave Length")
             && es.getOptInputParameterInfo(18).getName().equals("[SMT] Detection")
-            && es.getOptInputParameterInfo(19).getName().equals("[Display] Show Timer"));
+            && es.getOptInputParameterInfo(19).getName().equals("[Display] Show Timer")
+            && es.getOptInputParameterInfo(20).getName().equals("[HTF] FVG on Chart Candles")
+            && es.getOptInputParameterInfo(21).getName().equals("[HTF] Show PDH/PDL"));
+
+        // ---- [HTF] FVG + PDH/PDL (agreement 2026-09-11) ----
+        check("HTF option defaults ON", es.fvgOnChart && es.showPdhPdl);
+        TTFMEssence es2=new TTFMEssence();
+        es2.setOptInputParameter(20, Integer.valueOf(0));
+        es2.setOptInputParameter(21, Integer.valueOf(0));
+        check("HTF options toggle off", !es2.fvgOnChart && !es2.showPdhPdl);
+        // FVG detection (pure): none / bull / bear+time / filled / max cap
+        TTFMEssence.RB[] f0={ rb(0,1.00,1.10,0.95,1.05), rb(15,1.05,1.15,1.00,1.10), rb(30,1.10,1.20,1.02,1.15) };
+        check("FVG none when no gap", TTFMEssence.detectHtfFvgZones(f0,40,6).isEmpty());
+        TTFMEssence.RB[] f1={ rb(0,1.00,1.10,0.95,1.05), rb(15,1.05,1.15,1.00,1.08), rb(30,1.08,1.30,1.12,1.25) };
+        java.util.List<double[]> z1=TTFMEssence.detectHtfFvgZones(f1,40,6);
+        check("FVG bull detected, bounds+time", z1.size()==1 && z1.get(0)[0]==1.10 && z1.get(0)[1]==1.12
+            && z1.get(0)[2]==15 && z1.get(0)[3]==1 && z1.get(0)[4]==0);
+        TTFMEssence.RB[] f2={ rb(0,1.00,1.10,0.95,1.05), rb(15,1.05,1.15,1.00,1.08),
+                              rb(30,1.08,1.30,1.12,1.25), rb(45,1.20,1.22,1.05,1.06) };
+        java.util.List<double[]> z2=TTFMEssence.detectHtfFvgZones(f2,40,6);
+        check("FVG bull filled by close beyond far edge", z2.size()==1 && z2.get(0)[4]==1);
+        TTFMEssence.RB[] f3={ rb(0,1.20,1.25,1.18,1.22), rb(15,1.22,1.24,1.12,1.14), rb(30,1.14,1.10,1.00,1.05) };
+        java.util.List<double[]> z3=TTFMEssence.detectHtfFvgZones(f3,40,6);
+        check("FVG bear detected, bounds+time", z3.size()==1 && z3.get(0)[3]==0 && z3.get(0)[0]==1.10
+            && z3.get(0)[1]==1.18 && z3.get(0)[2]==15);
+        TTFMEssence.RB[] f4=new TTFMEssence.RB[40];
+        for (int i=0;i<40;i++){ double b=10*i; f4[i]=rb(1000L*i,b+1,b+4,b,b+2); }
+        java.util.List<double[]> z4=TTFMEssence.detectHtfFvgZones(f4,40,6);
+        check("FVG max cap 6", z4.size()==6);
+        // PDH/PDL pick (pure): last COMPLETED D candle + current model-day start
+        TTFMEssence.LayerData d1=new TTFMEssence.LayerData();
+        d1.enabled=true; d1.periodIndex=4; // D layer
+        d1.historical.add(cd(1.00,1.05,0.98,1.02,1000,true));
+        d1.historical.add(cd(1.02,1.09,1.01,1.04,9000000,true)); // last completed: hi 1.09 / lo 1.01
+        d1.curActive=true; d1.curStart=18000000;
+        double[] pp1=TTFMEssence.pdhPdlOf(d1);
+        check("PDH/PDL = last completed D candle", pp1[0]==1.09 && pp1[1]==1.01);
+        check("PDH/PDL dayStart = curStart while active", pp1[2]==18000000L);
+        d1.curActive=false; d1.curStart=0;
+        double[] pp2=TTFMEssence.pdhPdlOf(d1);
+        check("PDH/PDL dayStart = last completed + 1 day when idle", pp2[2]==9000000L+86400000L);
+        TTFMEssence.LayerData dEmpty=new TTFMEssence.LayerData();
+        dEmpty.enabled=true; dEmpty.periodIndex=4;
+        check("PDH/PDL null on empty layer", TTFMEssence.pdhPdlOf(dEmpty)==null);
 
         // ---- Desk: Grade presets (reference applyCisdGrade) ----
         TTFMEssence g1=new TTFMEssence();
