@@ -321,10 +321,10 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     // ================== [HTF] FVG + PDH/PDL (agreement 2026-09-11) ==================
     // REMOVAL (if not wanted): delete this block's 2 fields + 3 state fields, the 2 option
     //   lines + 2 setters in buildOptions, buildHtfFvgZones() + its 1-line call in calculate,
-    //   detectHtfFvgZones()/pdhPdlOf(), drawFvgHtf()/drawFvgChart()/drawPdhPdl()/
-    //   fmtPdhPdl() + their 3 calls in drawOutput, the "2*cW" in the
-    //   bodyWidth line (revert to cW), and the [HTF] test block in TTFMEssenceTest
-    //   (incl. the 22-options assert, revert to 20). Zero residue = green suites.
+    //   detectHtfFvgZones()/pdhPdlOf()/lastZonesPerLayer(), drawFvgHtf()/drawFvgChart()/
+    //   drawPdhPdl()/fmtPdhPdl() + their 3 calls in drawOutput, warnHtfDraw()/htfDrawWarned,
+    //   the "2*cW" in the bodyWidth line (revert to cW), and the [HTF] test block in
+    //   TTFMEssenceTest (incl. the 22-options assert, revert to 20). Zero residue = green suites.
     boolean fvgOnChart = true;   // [HTF] FVG on Chart Candles (default ON; layer columns always ON)
     boolean showPdhPdl = true;   // [HTF] Show PDH/PDL (default ON)
     private final List<double[]> fvgHtfZones = new ArrayList<>(); // {lo,hi,time,bull,state,layerIdx}
@@ -836,6 +836,18 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
             out.add(new double[]{lo,hi,bars[i-1].time,bull?1:0,state});
         }
         return out;
+    }
+    /** [HTF] Anti-clutter: keep the LAST `cap` zones per layer (chronological in, chronological out). */
+    static List<double[]> lastZonesPerLayer(List<double[]> zs,int cap){
+        List<double[]> show=new ArrayList<>(zs.size());
+        java.util.Map<Integer,Integer> cnt=new java.util.HashMap<>();
+        for (int i=zs.size()-1;i>=0;i--){
+            int li=(int)zs.get(i)[5];
+            int c=cnt.getOrDefault(li,0);
+            if (c<cap){ cnt.put(li,c+1); show.add(zs.get(i)); }
+        }
+        java.util.Collections.reverse(show);
+        return show;
     }
     /** [HTF] {pdh,pdl,dayStart} from a D-layer: last COMPLETED candle hi/lo + current
      *  model-day start (curStart while active, else last completed + 1 day). null if empty. */
@@ -1517,6 +1529,11 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     private final java.util.Map<String,Clip> soundClips=new java.util.HashMap<>();
     private boolean soundFileWarned=false;
     private boolean soundPlayWarned=false;
+    private boolean htfDrawWarned=false;
+    private void warnHtfDraw(String msg){
+        if (htfDrawWarned) return; htfDrawWarned=true;
+        try { context.getConsole().getWarn().println(msg); } catch (Exception ignore){}
+    }
     private void warnSoundFile(String msg){
         if (soundFileWarned) return; soundFileWarned=true;
         try { context.getConsole().getWarn().println(msg); } catch (Exception ignore){}
@@ -2298,51 +2315,57 @@ public class TTFMEssence implements IIndicator, IDrawingIndicator {
     }
     /** [HTF] the same FVG zones extended over the base-chart candles (toggle, default ON).
      *  v2 aesthetics (2026-09-11, user: "بدون حدود"): gradient fade 16%->3%, NO borders;
-     *  right-edge label on ACTIVE zones only; anti-clutter: last 4 zones per layer. */
+     *  right-edge label on ACTIVE zones only; anti-clutter: last 4 zones per layer.
+     *  Fail-safe (live bug 2026-09-11: zone time outside loaded bars / degenerate gradient
+     *  killed the rest of the draw, hiding PDH/PDL): every zone guarded, whole body
+     *  try/caught, paint/font/composite always restored — a failure here can NEVER
+     *  hide PDH/PDL or the info panel again. One-shot diagnosis in Messages (console warn). */
     private void drawFvgChart(Graphics2D g2,IIndicatorDrawingSupport support){
         if (!fvgOnChart) return;
         List<double[]> zs;
         synchronized (drawLock){ zs=new ArrayList<>(fvgHtfZones); }
         if (zs.isEmpty()) return;
         int chartW=support.getChartWidth();
-        List<double[]> show=new ArrayList<>(zs.size());
-        java.util.Map<Integer,Integer> cnt=new java.util.HashMap<>();
-        for (int i=zs.size()-1;i>=0;i--){
-            int li=(int)zs.get(i)[5];
-            if (cnt.getOrDefault(li,0)<4){ cnt.put(li,cnt.get(li)+1); show.add(zs.get(i)); }
-        }
-        java.util.Collections.reverse(show); // chronological: newest on top
+        List<double[]> show=lastZonesPerLayer(zs,4);
         java.awt.Paint oldPaint=g2.getPaint(); Font oldFont=g2.getFont();
-        for (double[] z:show){
-            int li=(int)z[5];
-            int x0=support.getXForTime((long)z[2],false);
-            if (x0>chartW) continue;
-            if (x0<0) x0=0;
-            int yT=(int)support.getYForValue(z[1]), yB=(int)support.getYForValue(z[0]);
-            if (yB<=yT) continue;
-            boolean bull=z[3]==1, active=z[4]==0;
-            if (!active){ // filled: whisper gray, no label
-                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.05f));
-                g2.setPaint(new Color(154,160,166));
-                g2.fillRect(x0,yT,chartW-x0,yB-yT);
+        try {
+            for (double[] z:show){
+                int li=(int)z[5];
+                int x0;
+                try { x0=support.getXForTime((long)z[2],false); }
+                catch (Exception e){ warnHtfDraw("[HTF] getXForTime("+((long)z[2])+") -> "+e); continue; }
+                if (x0>=chartW-2) continue;   // no room before the right edge (also kills degenerate gradients)
+                if (x0<2) x0=2;               // formation before the first loaded bar: continue from left edge
+                int yT=(int)support.getYForValue(z[1]), yB=(int)support.getYForValue(z[0]);
+                if (yB-yT<2) continue;
+                boolean bull=z[3]==1, active=z[4]==0;
+                if (!active){ // filled: whisper gray, no label
+                    g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.05f));
+                    g2.setPaint(new Color(154,160,166));
+                    g2.fillRect(x0,yT,chartW-x0,yB-yT);
+                    g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
+                    continue;
+                }
+                Color col=bull?new Color(38,166,154):new Color(239,83,80);
                 g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
-                continue;
+                g2.setPaint(new java.awt.GradientPaint(x0,yT,col,chartW,yT,new Color(col.getRed(),col.getGreen(),col.getBlue(),0)));
+                g2.fillRect(x0,yT,chartW-x0,yB-yT);
+                g2.setPaint(oldPaint);
+                g2.setFont(new Font("SansSerif",Font.BOLD,9));
+                FontMetrics fm=g2.getFontMetrics();
+                String lab="FVG "+SHORT_LABELS[layers[li].periodIndex];
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.7f));
+                g2.setColor(col);
+                g2.drawString(lab,chartW-fm.stringWidth(lab)-4,(yT+yB)/2+3);
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
             }
-            Color col=bull?new Color(38,166,154):new Color(239,83,80);
-            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
-            g2.setPaint(new java.awt.GradientPaint(x0,yT,col,chartW,yT,new Color(col.getRed(),col.getGreen(),col.getBlue(),0)));
-            g2.fillRect(x0,yT,chartW-x0,yB-yT);
+        } catch (Exception e){
+            warnHtfDraw("[HTF] FVG chart draw stopped safely: "+e);
+        } finally {
             g2.setPaint(oldPaint);
-            g2.setFont(new Font("SansSerif",Font.BOLD,9));
-            FontMetrics fm=g2.getFontMetrics();
-            String lab="FVG "+SHORT_LABELS[layers[li].periodIndex];
-            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.7f));
-            g2.setColor(col);
-            g2.drawString(lab,chartW-fm.stringWidth(lab)-4,(yT+yB)/2+3);
+            g2.setFont(oldFont);
             g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
         }
-        g2.setFont(oldFont);
-        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f));
     }
     /** [HTF] PDH/PDL = hi/lo of the last COMPLETED D candle; SOLID lines (no dashes) across the
      *  current model day + colored price tags at the right edge (auto-shift if the range is narrow). */

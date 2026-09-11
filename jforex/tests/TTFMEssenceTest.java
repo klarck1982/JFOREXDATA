@@ -360,6 +360,15 @@ public class TTFMEssenceTest {
         TTFMEssence.LayerData dEmpty=new TTFMEssence.LayerData();
         dEmpty.enabled=true; dEmpty.periodIndex=4;
         check("PDH/PDL null on empty layer", TTFMEssence.pdhPdlOf(dEmpty)==null);
+        // lastZonesPerLayer: per-layer cap keeps the NEWEST, chronological order (live NPE regression)
+        java.util.List<double[]> zbig=new java.util.ArrayList<>();
+        for (int i=0;i<7;i++) zbig.add(new double[]{0,0,i,1,0,0});   // layer 0: 7 zones, times 0..6
+        zbig.add(new double[]{0,0,1,1,0,1}); zbig.add(new double[]{0,0,2,1,0,1}); // layer 1: 2 zones
+        java.util.List<double[]> zc=TTFMEssence.lastZonesPerLayer(zbig,4);
+        check("lastZonesPerLayer cap 4 per layer", zc.size()==6);
+        check("lastZonesPerLayer keeps newest of layer 0", zc.get(0)[2]==3&&zc.get(3)[2]==6);
+        check("lastZonesPerLayer keeps all of layer 1", zc.get(4)[2]==1&&zc.get(5)[2]==2&&zc.get(4)[5]==1);
+        check("lastZonesPerLayer empty input", TTFMEssence.lastZonesPerLayer(new java.util.ArrayList<double[]>(),4).isEmpty());
 
         // ---- Desk: Grade presets (reference applyCisdGrade) ----
         TTFMEssence g1=new TTFMEssence();
